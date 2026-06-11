@@ -8,9 +8,11 @@ from pydantic import TypeAdapter
 from app.domain.external.file_storage import FileStorage
 from app.domain.external.json_parser import JSONParser
 from app.domain.external.llm import LLM
+from app.domain.external.memory_batch_writer import MemoryBatchWriter
 from app.domain.external.sandbox import Sandbox
 from app.domain.external.search import SearchEngine
 from app.domain.external.task import Task
+from app.domain.services.memory.memory_budget import MemoryBudgetManager
 from app.domain.models.app_config import AgentConfig, MCPConfig, A2AConfig
 from app.domain.models.event import BaseEvent, ErrorEvent, MessageEvent, Event, DoneEvent, WaitEvent
 from app.domain.models.session import Session, SessionStatus
@@ -35,6 +37,10 @@ class AgentService:
             json_parser: JSONParser,
             search_engine: SearchEngine,
             file_storage: FileStorage,
+            memory_batch_writer: Optional[MemoryBatchWriter] = None,
+            budget_manager: Optional[MemoryBudgetManager] = None,
+            summarizer: Optional[Any] = None,
+            memory_retriever: Optional[Any] = None,
     ) -> None:
         """构造函数，完成Agent服务初始化"""
         self._uow_factory = uow_factory
@@ -48,6 +54,10 @@ class AgentService:
         self._json_parser = json_parser
         self._search_engine = search_engine
         self._file_storage = file_storage
+        self._memory_batch_writer = memory_batch_writer
+        self._budget_manager = budget_manager
+        self._summarizer = summarizer
+        self._memory_retriever = memory_retriever
         logger.info(f"AgentService初始化成功")
 
     async def _get_task(self, session: Session) -> Optional[Task]:
@@ -95,6 +105,10 @@ class AgentService:
             browser=browser,
             search_engine=self._search_engine,
             sandbox=sandbox,
+            memory_batch_writer=self._memory_batch_writer,
+            budget_manager=self._budget_manager,
+            summarizer=self._summarizer,
+            memory_retriever=self._memory_retriever,
         )
 
         # 6.创建任务Task并更新会话中的信息

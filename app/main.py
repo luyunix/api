@@ -17,7 +17,7 @@ from app.infrastructure.storage.postgres import get_postgres
 from app.infrastructure.storage.redis import get_redis
 from app.interfaces.endpoints.routes import router
 from app.interfaces.errors.exception_handlers import register_exception_handlers
-from app.interfaces.service_dependencies import get_agent_service
+from app.interfaces.service_dependencies import get_agent_service, get_memory_batch_writer
 from core.config import get_settings
 
 
@@ -103,12 +103,21 @@ async def lifespan(app: FastAPI):
         logger.error("[5/5] COS初始化超时(5s)，请检查网络连接")
         raise
 
+    # 6.启动MemoryBatchWriter后台任务
+    logger.info("[6/6] 启动MemoryBatchWriter...")
     try:
-        # 4.lifespan分界点
+        await get_memory_batch_writer().start()
+        logger.info("[6/6] MemoryBatchWriter启动完成")
+    except Exception as e:
+        logger.error(f"[6/6] MemoryBatchWriter启动失败: {e}")
+        raise
+
+    try:
+        # 7.lifespan分界点
         yield
     finally:
         try:
-            # 5.等待agent服务关闭
+            # 8.等待agent服务关闭
             logger.info("Faber正在关闭")
             await asyncio.wait_for(get_agent_service().shutdown(), timeout=30.0)
             logger.info("Agent服务成功关闭")
@@ -116,6 +125,14 @@ async def lifespan(app: FastAPI):
             logger.warning("Agent服务关闭超时, 强制关闭, 部分任务将被释放")
         except Exception as e:
             logger.error(f"Agent服务关闭期间出现错误: {str(e)}")
+
+        # 9.关闭MemoryBatchWriter(先flush剩余队列)
+        try:
+            logger.info("正在关闭MemoryBatchWriter...")
+            await get_memory_batch_writer().shutdown()
+            logger.info("MemoryBatchWriter关闭成功")
+        except Exception as e:
+            logger.error(f"MemoryBatchWriter关闭失败: {e}")
 
         # 6.关闭其他应用
         await get_redis().shutdown()

@@ -18,6 +18,10 @@ from app.infrastructure.external.sandbox.docker_sandbox import DockerSandbox
 from app.infrastructure.external.search.bing_search import BingSearchEngine
 from app.infrastructure.external.task.redis_stream_task import RedisStreamTask
 from app.infrastructure.repositories.file_app_config_repository import FileAppConfigRepository
+from app.domain.services.memory.memory_budget import MemoryBudgetManager
+from app.domain.services.memory.memory_retriever import MemoryRetriever
+from app.domain.services.memory.memory_summarizer import MemorySummarizer
+from app.infrastructure.memory.db_memory_batch_writer import DBMemoryBatchWriter
 from app.infrastructure.storage.cos import Cos, get_cos
 from app.infrastructure.storage.oss import Oss, get_oss
 from app.infrastructure.storage.postgres import get_db_session, get_uow
@@ -26,6 +30,21 @@ from core.config import get_settings
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
+
+# 全局 MemoryBatchWriter 单例(延迟初始化)
+_memory_batch_writer: DBMemoryBatchWriter | None = None
+
+
+def get_memory_batch_writer() -> DBMemoryBatchWriter:
+    """获取记忆批量写入器单例"""
+    global _memory_batch_writer
+    if _memory_batch_writer is None:
+        _memory_batch_writer = DBMemoryBatchWriter(
+            uow_factory=get_uow,
+            batch_size=10,
+            flush_interval=3.0,
+        )
+    return _memory_batch_writer
 
 
 def get_app_config_service() -> AppConfigService:
@@ -106,7 +125,16 @@ def get_agent_service(
         uow_factory=get_uow,
     )
 
-    # 3.实例Agent服务并返回
+    # 3.创建 Token 预算管理器(预算设为 LLM max_tokens 的 90%,留出余量给输出)
+    budget_manager = MemoryBudgetManager(budget=int(llm.max_tokens * 0.9))
+
+    # 4.创建记忆摘要器(使用 LLM 为压缩后的消息生成智能摘要)
+    summarizer = MemorySummarizer(llm=llm)
+
+    # 5.创建记忆检索器(向量记忆,支持长程经验检索)
+    memory_retriever = MemoryRetriever(session_id="global", top_k=3)
+
+    # 6.实例Agent服务并返回
     return AgentService(
         uow_factory=get_uow,
         llm=llm,
@@ -118,6 +146,10 @@ def get_agent_service(
         json_parser=RepairJSONParser(),
         search_engine=BingSearchEngine(),
         file_storage=file_storage,
+        memory_batch_writer=get_memory_batch_writer(),
+        budget_manager=budget_manager,
+        summarizer=summarizer,
+        memory_retriever=memory_retriever,
     )
 
 
@@ -137,7 +169,16 @@ def get_agent_service_cos(
         uow_factory=get_uow,
     )
 
-    # 3.实例Agent服务并返回
+    # 3.创建 Token 预算管理器
+    budget_manager = MemoryBudgetManager(budget=int(llm.max_tokens * 0.9))
+
+    # 4.创建记忆摘要器
+    summarizer = MemorySummarizer(llm=llm)
+
+    # 5.创建记忆检索器
+    memory_retriever = MemoryRetriever(session_id="global", top_k=3)
+
+    # 6.实例Agent服务并返回
     return AgentService(
         uow_factory=get_uow,
         llm=llm,
@@ -149,4 +190,8 @@ def get_agent_service_cos(
         json_parser=RepairJSONParser(),
         search_engine=BingSearchEngine(),
         file_storage=file_storage,
+        memory_batch_writer=get_memory_batch_writer(),
+        budget_manager=budget_manager,
+        summarizer=summarizer,
+        memory_retriever=memory_retriever,
     )

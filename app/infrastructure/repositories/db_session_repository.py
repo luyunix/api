@@ -240,9 +240,12 @@ class DBSessionRepository(SessionRepository):
             raise ValueError(f"会话[{session_id}]不存在，请核实后重试")
 
     async def save_memory(self, session_id: str, agent_name: str, memory: Memory) -> None:
-        """存储或者更新会话中的记忆(字典直接覆盖)"""
-        # 1.将memory转换成为json结构
-        memory_data = memory.model_dump(mode="json")
+        """存储或者更新会话中的记忆(字典直接覆盖)
+
+        存储新格式 {"system_messages": [...], "working_messages": [...], "episodic_notes": []}
+        """
+        # 1.将memory转换为新格式json结构
+        memory_data = memory.to_legacy_dict()
 
         # 2.构建要打补丁的字典
         patch_data = {agent_name: memory_data}
@@ -262,7 +265,10 @@ class DBSessionRepository(SessionRepository):
             raise ValueError(f"会话[{session_id}]不存在，请核实后重试")
 
     async def get_memory(self, session_id: str, agent_name: str) -> Memory:
-        """获取指定会话的agent记忆信息"""
+        """获取指定会话的agent记忆信息
+
+        兼容旧格式 {"messages": [...]} 和新格式 {"system_messages": [...], ...}
+        """
         # 1.查询会话记忆信息
         stmt = (
             select(SessionModel.memories[agent_name])
@@ -271,9 +277,14 @@ class DBSessionRepository(SessionRepository):
         result = await self.db_session.execute(stmt)
         memory_data = result.scalar_one_or_none()
 
-        # 2.如果存在记忆则直接返回
+        # 2.如果存在记忆
         if memory_data:
+            # 检测旧格式（包含 messages 字段但不包含 system_messages）
+            if "messages" in memory_data and "system_messages" not in memory_data:
+                logger.info(f"检测到旧格式记忆,自动迁移: session={session_id}, agent={agent_name}")
+                return Memory._from_legacy_messages(memory_data.get("messages", []))
+            # 新格式
             return Memory(**memory_data)
 
         # 3.如果记忆不存在，则构建一个空记忆后返回
-        return Memory(messages=[])
+        return Memory()

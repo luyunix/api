@@ -11,8 +11,11 @@ from app.domain.external.browser import Browser
 from app.domain.external.file_storage import FileStorage
 from app.domain.external.json_parser import JSONParser
 from app.domain.external.llm import LLM
+from app.domain.external.memory_batch_writer import MemoryBatchWriter
 from app.domain.external.sandbox import Sandbox
 from app.domain.external.search import SearchEngine
+from app.domain.services.memory.memory_budget import MemoryBudgetManager
+from app.domain.services.memory.memory_summarizer import MemorySummarizer
 from app.domain.external.task import TaskRunner, Task
 from app.domain.models.app_config import AgentConfig, MCPConfig, A2AConfig
 from app.domain.models.event import ErrorEvent, Event, MessageEvent, BaseEvent, ToolEvent, ToolEventStatus, \
@@ -48,6 +51,10 @@ class AgentTaskRunner(TaskRunner):
             browser: Browser,  # 浏览器
             search_engine: SearchEngine,  # 搜索引擎
             sandbox: Sandbox,  # 沙箱
+            memory_batch_writer: MemoryBatchWriter | None = None,  # 记忆批量写入器
+            budget_manager: MemoryBudgetManager | None = None,  # Token 预算管理器
+            summarizer: MemorySummarizer | None = None,  # 记忆摘要器
+            memory_retriever: Any | None = None,  # 记忆检索器
     ) -> None:
         """构造函数，完成Agent任务运行器的创建"""
         self._uow_factory = uow_factory
@@ -71,6 +78,10 @@ class AgentTaskRunner(TaskRunner):
             search_engine=search_engine,
             mcp_tool=self._mcp_tool,
             a2a_tool=self._a2a_tool,
+            memory_batch_writer=memory_batch_writer,
+            budget_manager=budget_manager,
+            summarizer=summarizer,
+            memory_retriever=memory_retriever,
         )
 
     async def _put_and_add_event(self, task: Task, event: Event) -> None:

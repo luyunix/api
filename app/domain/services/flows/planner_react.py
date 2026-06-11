@@ -4,8 +4,12 @@ from typing import AsyncGenerator, Optional, Callable
 from app.domain.external.browser import Browser
 from app.domain.external.json_parser import JSONParser
 from app.domain.external.llm import LLM
+from app.domain.external.memory_batch_writer import MemoryBatchWriter
 from app.domain.external.sandbox import Sandbox
 from app.domain.external.search import SearchEngine
+from app.domain.services.memory.memory_budget import MemoryBudgetManager
+from app.domain.services.memory.memory_retriever import MemoryRetriever
+from app.domain.services.memory.memory_summarizer import MemorySummarizer
 from app.domain.models.app_config import AgentConfig
 from app.domain.models.event import BaseEvent, PlanEvent, PlanEventStatus, TitleEvent, MessageEvent
 from app.domain.models.event import DoneEvent
@@ -42,6 +46,10 @@ class PlannerReActFlow(BaseFlow):
             search_engine: SearchEngine,  # 搜索引擎
             mcp_tool: MCPTool,  # mcp工具
             a2a_tool: A2ATool,  # a2a远程agent
+            memory_batch_writer: MemoryBatchWriter | None = None,  # 记忆批量写入器
+            budget_manager: MemoryBudgetManager | None = None,  # Token 预算管理器
+            summarizer: MemorySummarizer | None = None,  # 记忆摘要器
+            memory_retriever: MemoryRetriever | None = None,  # 记忆检索器
     ) -> None:
         """构造函数，完成规划与执行流的初始化"""
         # 1.流初始化数据配置
@@ -70,6 +78,10 @@ class PlannerReActFlow(BaseFlow):
             llm=llm,
             json_parser=json_parser,
             tools=tools,
+            memory_batch_writer=memory_batch_writer,
+            budget_manager=budget_manager,
+            summarizer=summarizer,
+            memory_retriever=memory_retriever,
         )
         logger.debug(f"创建规划Agent成功, 会话id: {self._session_id}")
 
@@ -81,6 +93,10 @@ class PlannerReActFlow(BaseFlow):
             llm=llm,
             json_parser=json_parser,
             tools=tools,
+            memory_batch_writer=memory_batch_writer,
+            budget_manager=budget_manager,
+            summarizer=summarizer,
+            memory_retriever=memory_retriever,
         )
         logger.debug(f"创建执行Agent成功, 会话id: {self._session_id}")
 
