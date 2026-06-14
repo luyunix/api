@@ -24,6 +24,11 @@ class Cos:
             logger.warning("Cos腾讯云对象存储已初始化，无需重复操作")
             return
 
+        # 本地开发未配置COS时跳过初始化，避免启动失败
+        if not self._settings.cos_secret_id or not self._settings.cos_secret_key or not self._settings.cos_region:
+            logger.warning("COS未配置(SecretId/SecretKey/Region为空)，跳过初始化")
+            return
+
         try:
             # 2.创建cos配置
             config = CosConfig(
