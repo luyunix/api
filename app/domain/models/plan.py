@@ -17,6 +17,7 @@ class Step(BaseModel):
     """计划中的每一个步骤/子任务"""
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))  # 子任务id
     description: str = ""  # 步骤的描述信息
+    success_criteria: Optional[str] = None  # 步骤的验收标准，描述什么情况下算这一步成功
     status: ExecutionStatus = ExecutionStatus.PENDING  # 子任务的执行状态
     result: Optional[str] = None  # 结果
     error: Optional[str] = None  # 错误信息

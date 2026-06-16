@@ -18,6 +18,7 @@ from app.domain.services.memory.memory_retriever import MemoryRetriever
 from app.domain.services.memory.memory_summarizer import MemorySummarizer
 from app.domain.services.memory.token_counter import TokenCounter
 from app.domain.services.tools.base import BaseTool
+from app.domain.services.prompts.react import REFLECTION_PROMPT
 
 logger = logging.getLogger(__name__)
 
@@ -270,8 +271,8 @@ class BaseAgent(ABC):
         # 6.将记忆持久化
         await self._persist_memory()
 
-    async def invoke(self, query: str, format: Optional[str] = None) -> AsyncGenerator[BaseEvent, None]:
-        """传递消息+响应格式调用程序生成异步迭代内容"""
+    async def invoke(self, query: str, format: Optional[str] = None, plan_context: Optional[Dict[str, Any]] = None) -> AsyncGenerator[BaseEvent, None]:
+        """传递消息+响应格式+可选的计划上下文调用程序生成异步迭代内容"""
         # 1.需要判断下是否传递了format
         format = format if format else self._format
 
@@ -282,7 +283,13 @@ class BaseAgent(ABC):
         )
 
         # 3.循环遍历直到最大迭代次数
-        for _ in range(self._agent_config.max_iterations):
+        # 如果传入了计划上下文（ReAct执行步骤），则使用单步迭代预算；否则使用全局预算
+        iteration_limit = (
+            min(self._agent_config.max_iterations_per_step, self._agent_config.max_iterations)
+            if plan_context
+            else self._agent_config.max_iterations
+        )
+        for loop_index in range(1, iteration_limit + 1):
             # 4.如果LLM响应为空或无工具调用则表示LLM生成了文本回答，这时候就是最终答案
             if not message or not message.get("tool_calls"):
                 break
@@ -331,14 +338,39 @@ class BaseAgent(ABC):
                     "content": result.model_dump_json(),
                 })
 
-            # 12.所有工具都执行完成后，调用LLM获取汇总消息二次提供
+            # 12.如果配置了计划上下文且到达反思间隔，则插入反思提示
+            if (
+                plan_context
+                and self._agent_config.reflection_interval > 0
+                and loop_index % self._agent_config.reflection_interval == 0
+            ):
+                reflection_message = self._build_reflection_message(plan_context)
+                tool_messages.insert(0, {
+                    "role": "user",
+                    "content": reflection_message,
+                })
+                logger.info(f"Agent[{self.name}] 触发第 {loop_index} 轮反思检查点")
+
+            # 13.所有工具都执行完成后，调用LLM获取汇总消息二次提供
             message = await self._invoke_llm(tool_messages)
         else:
-            # 13.超过最大迭代次数后，则抛出错误
-            yield ErrorEvent(error=f"Agent迭代超过最大迭代次数: {self._agent_config.max_iterations}, 任务处理失败")
+            # 14.超过最大迭代次数后，则抛出错误
+            yield ErrorEvent(error=f"Agent迭代超过最大迭代次数: {iteration_limit}, 任务处理失败")
 
-        # 14.在指定步骤内完成了迭代则返回消息事件
+        # 15.在指定步骤内完成了迭代则返回消息事件
         if message and message.get("content") is not None:
             yield MessageEvent(message=message["content"])
         else:
             yield ErrorEvent(error="Agent未能生成有效回复内容")
+
+    def _build_reflection_message(self, plan_context: Dict[str, Any]) -> str:
+        """根据计划上下文构建反思提示消息"""
+        return REFLECTION_PROMPT.format(
+            goal=plan_context.get("goal", ""),
+            title=plan_context.get("title", ""),
+            current_step_index=plan_context.get("current_step_index", 0),
+            total_steps=plan_context.get("total_steps", 0),
+            current_step_description=plan_context.get("current_step", ""),
+            completed_steps=plan_context.get("completed_steps", "无"),
+            remaining_steps=plan_context.get("remaining_steps", "无"),
+        )

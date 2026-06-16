@@ -9,14 +9,31 @@ REACT_SYSTEM_PROMPT = """
 5. **提交结果**：将最终结果发送给用户，结果必须详尽且具体。
 """
 
-# 执行子步骤提示词模板，包含message、attachments、language、step
+# 执行子步骤提示词模板，包含message、attachments、language、step、plan上下文
 EXECUTION_PROMPT = """
-你正在执行任务：
+你正在执行一个多步骤任务中的一部分。在执行当前步骤时，请始终牢记全局目标，不要偏离主线。
+
+=== 任务全局上下文 ===
+任务标题: {title}
+任务目标: {goal}
+总进度: {current_step_index} / {total_steps}
+已完成步骤:
+{completed_steps}
+待执行步骤:
+{remaining_steps}
+====================
+
+你正在执行的任务：
 {step}
+
+验收标准：
+{success_criteria}
 
 注意事项：
 - **是你来执行这个任务，而不是用户。**不要告诉用户“如何做”，而是直接通过工具“去做”。
 - **必须使用用户消息中使用的语言（Working Language）来执行任务和回复。**
+- 当前步骤应服务于全局目标。如果当前步骤的结果已经偏离全局目标，请主动修正或调用 `message_ask_user` 向用户确认。
+- 执行完成后，请对照「验收标准」自我验证。如果验收标准已满足，在 result 中明确说明。
 - 必须使用 `message_notify_user` 工具向用户通报进度，内容限制在一句话以内：
     - 你打算使用什么工具，以及用它做什么；
     - 或者你通过工具完成了什么；
@@ -104,4 +121,32 @@ JSON 输出示例：
         "/home/ubuntu/data.csv"
     ]
 }}
+"""
+
+# ReAct 工具循环反思提示词
+# 每隔 reflection_interval 轮工具循环插入一次，强制 LLM 对齐全局目标
+REFLECTION_PROMPT = """
+=== 执行反思检查点 ===
+你正在执行一个多步骤任务。请暂停当前操作，快速回顾并反思：
+
+任务标题: {title}
+任务目标: {goal}
+当前进度: 第 {current_step_index} / {total_steps} 步
+当前步骤: {current_step_description}
+
+已完成步骤:
+{completed_steps}
+
+待执行步骤:
+{remaining_steps}
+
+请回答以下问题（尽量简洁，不超过3句话）：
+1. 我当前的操作是否仍然对齐原始目标？
+2. 我是否陷入了不必要的细节或重复尝试？
+3. 下一步应该做什么才能最高效地推进任务？
+4. 根据当前已收集的结果，任务目标是否已提前达成？
+   如果已达成，请在后续回复中直接输出最终结果（可包含 `[EARLY_COMPLETE]` 标记），不再调用工具。
+
+回答完成后，继续执行你认为最合适的下一个工具调用。
+====================
 """

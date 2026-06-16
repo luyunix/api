@@ -1,4 +1,5 @@
 import logging
+import time
 from typing import AsyncGenerator, Optional, Callable
 
 from app.domain.external.browser import Browser
@@ -14,7 +15,7 @@ from app.domain.models.app_config import AgentConfig
 from app.domain.models.event import BaseEvent, PlanEvent, PlanEventStatus, TitleEvent, MessageEvent
 from app.domain.models.event import DoneEvent
 from app.domain.models.message import Message
-from app.domain.models.plan import Plan, ExecutionStatus
+from app.domain.models.plan import Plan, Step, ExecutionStatus
 from app.domain.models.session import SessionStatus
 from app.domain.services.agents.planner import PlannerAgent
 from app.domain.services.agents.react import ReActAgent
@@ -58,6 +59,7 @@ class PlannerReActFlow(BaseFlow):
         self._session_id = session_id
         self.status = FlowStatus.IDLE
         self.plan: Optional[Plan] = None
+        self._start_time: Optional[float] = None
 
         # 2.初始化Agent预设工具列表
         tools = [
@@ -132,6 +134,9 @@ class PlannerReActFlow(BaseFlow):
         async with self._uow:
             await self._uow.session.update_status(self._session_id, SessionStatus.RUNNING)
 
+        # 5.1 记录任务开始时间，用于任务级超时检查
+        self._start_time = time.time()
+
         # 6.获取当前会话中最新事件
         self.plan = session.get_latest_plan()
         logger.info(f"Planner&ReAct流接收消息: {message.message[:50]}...")
@@ -141,6 +146,23 @@ class PlannerReActFlow(BaseFlow):
 
         # 8.创建死循环执行任务，根据流的不同状态执行不同的操作
         while True:
+            # 8.1 检查任务是否超时
+            if self._start_time is not None:
+                elapsed = time.time() - self._start_time
+                if elapsed > self._agent_config.task_timeout_seconds:
+                    logger.error(
+                        f"Planner&ReAct流任务超时，已运行 {elapsed:.1f}s，"
+                        f"超过 {self._agent_config.task_timeout_seconds}s，强制终止"
+                    )
+                    self.plan.status = ExecutionStatus.FAILED
+                    self.plan.error = f"任务执行超过 {self._agent_config.task_timeout_seconds} 秒，已终止"
+                    self.status = FlowStatus.COMPLETED
+                    yield ErrorEvent(
+                        error=f"任务执行超过 {self._agent_config.task_timeout_seconds} 秒，已终止"
+                    )
+                    yield PlanEvent(status=PlanEventStatus.COMPLETED, plan=self.plan)
+                    break
+
             # 9.如果流的状态为空闲，则只需要将状态修改为规划中
             if self.status == FlowStatus.IDLE:
                 logger.info(f"Planner&ReAct流状态从{FlowStatus.IDLE}变成{FlowStatus.PLANNING}")
@@ -188,6 +210,21 @@ class PlannerReActFlow(BaseFlow):
                 async for event in self.react.execute_step(self.plan, step, message):
                     yield event
 
+                # 20.1 提前完成检测：如果当前步骤结果包含提前完成标记，且全局目标已满足，则跳过剩余步骤
+                if (
+                    self._agent_config.enable_early_completion
+                    and step.result
+                    and self.react.detect_early_completion(step.result)
+                ):
+                    remaining_steps = [s for s in self.plan.steps if not s.done and s.id != step.id]
+                    if remaining_steps:
+                        logger.info(f"步骤 {step.id} 触发提前完成标记，检查全局目标是否已满足")
+                        goal_satisfied = await self._check_goal_satisfied(self.plan, step)
+                        if goal_satisfied:
+                            logger.info("全局目标已提前达成，跳过剩余步骤并进入总结")
+                            self.status = FlowStatus.SUMMARIZING
+                            continue
+
                 # 21.压缩执行Agent记忆，避免上下文腐化+消耗大量token
                 logger.info(f"压缩{self.react.name} Agent记忆/上下文")
                 await self.react.compact_memory()
@@ -226,3 +263,33 @@ class PlannerReActFlow(BaseFlow):
     def done(self) -> bool:
         """只读属性，返回流是否运行结束"""
         return self.status == FlowStatus.IDLE
+
+    async def _check_goal_satisfied(self, plan: Plan, completed_step: Step) -> bool:
+        """轻量级检查：判断全局目标是否已被已完成的步骤满足"""
+        remaining = [
+            s.description for s in plan.steps
+            if not s.done and s.id != completed_step.id
+        ]
+        prompt = f"""
+你正在判断一个多步骤任务的全局目标是否已经提前达成。
+
+任务目标: {plan.goal}
+当前已完成步骤: {completed_step.description}
+该步骤结果摘要: {completed_step.result or "无"}
+剩余待执行步骤: {remaining or "无"}
+
+请仅回答 yes 或 no：当前已完成的步骤是否已经满足了全局任务目标？
+如果剩余步骤仍然必要，请回答 no。
+"""
+        try:
+            response = await self.planner._llm.invoke(
+                messages=[{"role": "user", "content": prompt}],
+                tools=None,
+            )
+            content = response.get("content", "").lower()
+            satisfied = "yes" in content or "是" in content
+            logger.info(f"提前完成检测: 全局目标是否已达成={satisfied}, LLM回复={content[:50]}")
+            return satisfied
+        except Exception as e:
+            logger.warning(f"提前完成检测调用LLM失败: {str(e)}")
+            return False

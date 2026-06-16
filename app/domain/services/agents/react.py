@@ -1,5 +1,5 @@
 import logging
-from typing import AsyncGenerator
+from typing import AsyncGenerator, Optional
 
 from app.domain.models.event import (
     StepEventStatus,
@@ -14,7 +14,7 @@ from app.domain.models.event import (
 from app.domain.models.file import File
 from app.domain.models.message import Message
 from app.domain.models.plan import Plan, Step, ExecutionStatus
-from app.domain.services.prompts.react import REACT_SYSTEM_PROMPT, EXECUTION_PROMPT, SUMMARIZE_PROMPT
+from app.domain.services.prompts.react import REACT_SYSTEM_PROMPT, EXECUTION_PROMPT, SUMMARIZE_PROMPT, REFLECTION_PROMPT
 from app.domain.services.prompts.system import SYSTEM_PROMPT
 from .base import BaseAgent
 
@@ -27,22 +27,71 @@ class ReActAgent(BaseAgent):
     _system_prompt: str = SYSTEM_PROMPT + REACT_SYSTEM_PROMPT
     _format: str = "json_object"  # format控制的是content、工具调用控制的是tool_calls两者不冲突
 
+    @staticmethod
+    def detect_early_completion(text: Optional[str]) -> bool:
+        """检测文本中是否包含提前完成标记"""
+        if not text:
+            return False
+        markers = [
+            "[EARLY_COMPLETE]",
+            "已提前完成",
+            "任务已提前达成",
+            "early complete",
+            "无需进一步操作",
+            "目标已达成",
+        ]
+        text_lower = text.lower()
+        return any(marker.lower() in text_lower for marker in markers)
+
     async def execute_step(self, plan: Plan, step: Step, message: Message) -> AsyncGenerator[BaseEvent, None]:
         """根据传递的消息+规划+子步骤，执行相应的子步骤"""
-        # 1.根据传递的内容生成执行消息
+        # 1.构建全局计划上下文
+        current_step_index = next(
+            (i for i, s in enumerate(plan.steps) if s.id == step.id),
+            -1,
+        ) + 1
+        completed_steps = [
+            f"- [完成] {s.description}"
+            for s in plan.steps
+            if s.done and s.id != step.id
+        ]
+        remaining_steps = [
+            f"- [待执行] {s.description}"
+            for s in plan.steps
+            if not s.done and s.id != step.id
+        ]
+        plan_context = {
+            "goal": plan.goal,
+            "title": plan.title,
+            "current_step": step.description,
+            "completed_steps": "\n".join(completed_steps) if completed_steps else "无",
+            "remaining_steps": "\n".join(remaining_steps) if remaining_steps else "无",
+            "current_step_index": current_step_index,
+            "total_steps": len(plan.steps),
+        }
+
+        # 2.根据传递的内容生成执行消息
         query = EXECUTION_PROMPT.format(
             message=message.message,
             attachments="\n".join(message.attachments),
             language=plan.language,
             step=step.description,
+            goal=plan_context["goal"],
+            title=plan_context["title"],
+            current_step=plan_context["current_step"],
+            completed_steps=plan_context["completed_steps"],
+            remaining_steps=plan_context["remaining_steps"],
+            current_step_index=plan_context["current_step_index"],
+            total_steps=plan_context["total_steps"],
+            success_criteria=step.success_criteria or "无明确验收标准，请尽力完成该步骤描述的任务",
         )
 
-        # 2.更新步骤的执行状态为运行中并返回Step事件
+        # 3.更新步骤的执行状态为运行中并返回Step事件
         step.status = ExecutionStatus.RUNNING
         yield StepEvent(step=step, status=StepEventStatus.STARTED)
 
-        # 3.调用invoke获取agent返回的事件内容
-        async for event in self.invoke(query):
+        # 4.调用invoke获取agent返回的事件内容
+        async for event in self.invoke(query, plan_context=plan_context):
             # 4.判断事件类型执行不同操作
             if isinstance(event, ToolEvent):
                 # 5.工具事件需要判断工具的名称是否为message_ask_user
