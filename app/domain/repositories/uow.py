@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
 from typing import TypeVar
 
+from .episodic_memory_repository import EpisodicMemoryRepository
 from .file_repository import FileRepository
 from .session_repository import SessionRepository
 
@@ -11,6 +12,7 @@ class IUnitOfWork(ABC):
     """Uow模式协议接口"""
     file: FileRepository
     session: SessionRepository
+    episodic_memory: EpisodicMemoryRepository
 
     @abstractmethod
     async def commit(self):

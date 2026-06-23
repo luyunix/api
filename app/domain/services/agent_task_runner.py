@@ -14,8 +14,6 @@ from app.domain.external.llm import LLM
 from app.domain.external.memory_batch_writer import MemoryBatchWriter
 from app.domain.external.sandbox import Sandbox
 from app.domain.external.search import SearchEngine
-from app.domain.services.memory.memory_budget import MemoryBudgetManager
-from app.domain.services.memory.memory_summarizer import MemorySummarizer
 from app.domain.external.task import TaskRunner, Task
 from app.domain.models.app_config import AgentConfig, MCPConfig, A2AConfig
 from app.domain.models.event import ErrorEvent, Event, MessageEvent, BaseEvent, ToolEvent, ToolEventStatus, \
@@ -52,9 +50,8 @@ class AgentTaskRunner(TaskRunner):
             search_engine: SearchEngine,  # 搜索引擎
             sandbox: Sandbox,  # 沙箱
             memory_batch_writer: MemoryBatchWriter | None = None,  # 记忆批量写入器
-            budget_manager: MemoryBudgetManager | None = None,  # Token 预算管理器
-            summarizer: MemorySummarizer | None = None,  # 记忆摘要器
-            memory_retriever: Any | None = None,  # 记忆检索器
+            memory_compactor: Any | None = None,  # 记忆压缩器（token 预算）
+            episodic_memory_service: Any | None = None,  # 情景记忆服务
     ) -> None:
         """构造函数，完成Agent任务运行器的创建"""
         self._uow_factory = uow_factory
@@ -79,9 +76,8 @@ class AgentTaskRunner(TaskRunner):
             mcp_tool=self._mcp_tool,
             a2a_tool=self._a2a_tool,
             memory_batch_writer=memory_batch_writer,
-            budget_manager=budget_manager,
-            summarizer=summarizer,
-            memory_retriever=memory_retriever,
+            memory_compactor=memory_compactor,
+            episodic_memory_service=episodic_memory_service,
         )
 
     async def _put_and_add_event(self, task: Task, event: Event) -> None:

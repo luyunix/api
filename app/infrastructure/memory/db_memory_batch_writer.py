@@ -109,13 +109,32 @@ class DBMemoryBatchWriter(MemoryBatchWriter):
         if not batch:
             return
 
-        # 2. 批量写入数据库
+        # 2. 批量写入数据库（带重试，失败时 ERROR 级别告警，不再静默吞错）
         logger.info(f"MemoryBatchWriter 批量写入 {len(batch)} 条记忆")
-        try:
-            uow = self._uow_factory()
-            async with uow:
-                for (session_id, agent_name), memory in batch.items():
-                    await uow.session.save_memory(session_id, agent_name, memory)
-        except Exception as e:
-            logger.error(f"MemoryBatchWriter 批量写入失败: {e}")
-            # 防御性处理:批量写入失败不抛异常,避免打断 Agent 执行
+        max_retries = 2
+        last_error: Exception | None = None
+        for attempt in range(1, max_retries + 2):  # 初试 + 最多 max_retries 次重试
+            try:
+                uow = self._uow_factory()
+                async with uow:
+                    for (session_id, agent_name), memory in batch.items():
+                        await uow.session.save_memory(session_id, agent_name, memory)
+                # 写入成功
+                if attempt > 1:
+                    logger.info(f"MemoryBatchWriter 第 {attempt} 次尝试写入成功")
+                return
+            except Exception as e:
+                last_error = e
+                if attempt <= max_retries:
+                    logger.warning(
+                        f"MemoryBatchWriter 批量写入失败(第 {attempt} 次)，将重试: {e}"
+                    )
+                    await asyncio.sleep(0.5 * attempt)  # 指数退避
+                else:
+                    # 重试耗尽：ERROR 级别告警，含受影响的会话/Agent，便于排查
+                    affected = ", ".join(f"{s}/{a}" for (s, a) in batch.keys())
+                    logger.error(
+                        f"MemoryBatchWriter 批量写入最终失败(已重试 {max_retries} 次)，"
+                        f"受影响记忆[{affected}]: {e}"
+                    )
+                    # 不抛异常打断 Agent，但记忆可能丢失——已通过 ERROR 日志暴露

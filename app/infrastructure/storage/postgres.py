@@ -50,6 +50,17 @@ class Postgres:
                 # 5.检查是否安装了uuid扩展，如果没有的话则安装
                 await async_conn.execute(text('CREATE EXTENSION IF NOT EXISTS "uuid-ossp";'))
                 logger.info("成功连接Postgres并安装uuid-ossp扩展")
+
+                # 6.安装 pgvector 扩展（情景记忆向量召回依赖）
+                #    容错处理：若当前 PG 未安装 pgvector（如未切到 pgvector 镜像），
+                #    仅告警不中断启动，情景记忆功能会降级，普通会话功能不受影响。
+                try:
+                    await async_conn.execute(text('CREATE EXTENSION IF NOT EXISTS vector;'))
+                    logger.info("成功安装 pgvector 扩展")
+                except Exception as e:
+                    logger.warning(
+                        f"安装 pgvector 扩展失败（情景记忆将不可用，请使用 pgvector/pgvector 镜像）: {str(e)}"
+                    )
         except Exception as e:
             logger.error(f"连接Postgres失败: {str(e)}")
             raise

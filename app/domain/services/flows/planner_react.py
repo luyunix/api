@@ -8,9 +8,8 @@ from app.domain.external.llm import LLM
 from app.domain.external.memory_batch_writer import MemoryBatchWriter
 from app.domain.external.sandbox import Sandbox
 from app.domain.external.search import SearchEngine
-from app.domain.services.memory.memory_budget import MemoryBudgetManager
-from app.domain.services.memory.memory_retriever import MemoryRetriever
-from app.domain.services.memory.memory_summarizer import MemorySummarizer
+from app.domain.services.memory.episodic_memory_service import EpisodicMemoryService
+from app.domain.services.memory.memory_budget import MemoryCompactor
 from app.domain.models.app_config import AgentConfig
 from app.domain.models.event import BaseEvent, PlanEvent, PlanEventStatus, TitleEvent, MessageEvent
 from app.domain.models.event import DoneEvent
@@ -48,9 +47,8 @@ class PlannerReActFlow(BaseFlow):
             mcp_tool: MCPTool,  # mcp工具
             a2a_tool: A2ATool,  # a2a远程agent
             memory_batch_writer: MemoryBatchWriter | None = None,  # 记忆批量写入器
-            budget_manager: MemoryBudgetManager | None = None,  # Token 预算管理器
-            summarizer: MemorySummarizer | None = None,  # 记忆摘要器
-            memory_retriever: MemoryRetriever | None = None,  # 记忆检索器
+            memory_compactor: MemoryCompactor | None = None,  # 记忆压缩器（token 预算）
+            episodic_memory_service: EpisodicMemoryService | None = None,  # 情景记忆服务
     ) -> None:
         """构造函数，完成规划与执行流的初始化"""
         # 1.流初始化数据配置
@@ -81,9 +79,8 @@ class PlannerReActFlow(BaseFlow):
             json_parser=json_parser,
             tools=tools,
             memory_batch_writer=memory_batch_writer,
-            budget_manager=budget_manager,
-            summarizer=summarizer,
-            memory_retriever=memory_retriever,
+            memory_compactor=memory_compactor,
+            episodic_memory_service=episodic_memory_service,
         )
         logger.debug(f"创建规划Agent成功, 会话id: {self._session_id}")
 
@@ -96,11 +93,13 @@ class PlannerReActFlow(BaseFlow):
             json_parser=json_parser,
             tools=tools,
             memory_batch_writer=memory_batch_writer,
-            budget_manager=budget_manager,
-            summarizer=summarizer,
-            memory_retriever=memory_retriever,
+            memory_compactor=memory_compactor,
+            episodic_memory_service=episodic_memory_service,
         )
         logger.debug(f"创建执行Agent成功, 会话id: {self._session_id}")
+
+        # 5.记忆依赖（情景记忆写入用）
+        self._episodic_memory_service = episodic_memory_service
 
     async def invoke(self, message: Message) -> AsyncGenerator[BaseEvent, None]:
         """传递消息，运行流，在六中调用planner&react智能体组合完成任务并返回对应事件"""
@@ -252,6 +251,17 @@ class PlannerReActFlow(BaseFlow):
             elif self.status == FlowStatus.COMPLETED:
                 # 27.计划状态已完成则更新plan状态，并发送计划事件通知API已完成
                 self.plan.status = ExecutionStatus.COMPLETED
+
+                # 28.情景记忆学习：任务完成后提炼可复用经验写入 pgvector（学习闭环）
+                #    仅在情景记忆启用时执行，失败不影响主流程
+                if self._episodic_memory_service:
+                    try:
+                        await self._episodic_memory_service.index_task(
+                            self._session_id, self.react.name, self.plan, message
+                        )
+                    except Exception as e:
+                        logger.warning(f"情景记忆写入失败: {e}")
+
                 self.status = FlowStatus.IDLE
                 yield PlanEvent(status=PlanEventStatus.COMPLETED, plan=self.plan)
                 break

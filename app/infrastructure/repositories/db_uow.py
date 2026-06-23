@@ -5,6 +5,7 @@ from typing import Optional
 from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession
 
 from app.domain.repositories.uow import IUnitOfWork
+from .db_episodic_memory_repository import DBEpisodicMemoryRepository
 from .db_file_repository import DBFileRepository
 from .db_session_repository import DBSessionRepository
 
@@ -35,6 +36,7 @@ class DBUnitOfWork(IUnitOfWork):
         # 2.初始化所有数据库仓库
         self.file = DBFileRepository(db_session=self.db_session)
         self.session = DBSessionRepository(db_session=self.db_session)
+        self.episodic_memory = DBEpisodicMemoryRepository(db_session=self.db_session)
 
         return self
 
