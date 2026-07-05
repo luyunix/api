@@ -14,11 +14,32 @@ class LLMConfig(BaseModel):
     max_tokens: int = Field(8192, ge=0)  # 最大输出token数，默认设置为deepseek-chat模型的最大输出限制
 
 
+class EmbeddingConfig(BaseModel):
+    """Embedding提供商配置
+
+    独立于 LLM 配置：DeepSeek 不提供 embedding 接口，需要单独配置一个
+    OpenAI 兼容的 embedding provider（DashScope/Qwen、SiliconFlow、OpenAI 等）。
+    dimension 必须与 pgvector 列维度（EpisodicMemoryModel.EMBEDDING_DIMENSION）一致，
+    修改 dimension 需新建迁移并重新生成向量。
+    """
+    enabled: bool = False  # 是否启用情景记忆（需要 pgvector + embedding provider）
+    base_url: HttpUrl = "https://dashscope.aliyuncs.com/compatible-mode/v1"  # 默认DashScope(Qwen)
+    api_key: str = ""  # Embedding API秘钥（DashScope: DASHSCOPE_API_KEY）
+    model_name: str = "text-embedding-v3"  # 默认DashScope Qwen，1024维
+    dimension: int = Field(1024, gt=0)  # 向量维度，需与pgvector列维度一致
+    batch_size: int = Field(32, gt=0)  # 批量生成向量时的批次大小
+
+
 class AgentConfig(BaseModel):
     """Agent通用配置"""
     max_iterations: int = Field(default=100, gt=0, lt=1000)  # Agent最大迭代次数
+    max_iterations_per_step: int = Field(default=20, gt=0, lt=100)  # ReAct单步最大迭代次数
     max_retries: int = Field(default=3, gt=1, lt=10)  # 最大重试次数
     max_search_results: int = Field(default=10, gt=1, lt=30)  # 最大搜索结果条数
+    reflection_interval: int = Field(default=5, ge=0, lt=100)  # ReAct工具循环反思间隔，0表示关闭
+    task_timeout_seconds: int = Field(default=600, gt=0, lt=3600)  # 任务级超时时间（秒）
+    enable_early_completion: bool = Field(default=True)  # 是否启用提前完成检测
+    context_window: int = Field(default=65536, gt=0)  # 模型上下文窗口token数（DeepSeek ~64K），用于记忆预算计算
 
 
 class MCPTransport(str, Enum):
@@ -84,9 +105,10 @@ class A2AConfig(BaseModel):
 
 
 class AppConfig(BaseModel):
-    """应用配置信息，包含Agent配置、LLM提供商配置、MCP配置、A2A配置"""
+    """应用配置信息，包含Agent配置、LLM提供商配置、Embedding配置、MCP配置、A2A配置"""
     llm_config: LLMConfig  # 语言模型配置
     agent_config: AgentConfig  # Agent通用配置
+    embedding_config: EmbeddingConfig = Field(default_factory=EmbeddingConfig)  # Embedding提供商配置
     mcp_config: MCPConfig  # MCP服务配置
     a2a_config: A2AConfig  # A2A服务配置
 

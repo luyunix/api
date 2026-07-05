@@ -17,6 +17,7 @@ CREATE_PLAN_PROMPT = """
 - 你的计划必须简洁明了，不要添加任何不必要的细节
 - 你的步骤必须是原子性且独立的，以便下一个执行者可以使用工具逐一执行它们
 - 你需要判断任务是否可以拆分为多个步骤，如果可以，返回多个步骤；否则，返回单个步骤
+- **为每个步骤添加 `success_criteria`，描述该步骤完成的具体可验证标准。如果无法明确验收条件，可省略。**
 
 返回格式要求：
 - 必须返回符合以下 TypeScript 接口定义的 JSON 格式
@@ -36,6 +37,8 @@ interface CreatePlanResponse {{
     id: string;
     /** 步骤描述 **/
     description: string;
+    /** 步骤验收标准：什么情况下算这一步成功完成，可选 **/
+    success_criteria?: string;
   }}>;
   /** 根据上下文生成的计划目标 **/
   goal: string;
@@ -53,7 +56,8 @@ JSON 输出示例:
   "steps": [
     {{
       "id": "1",
-      "description": "步骤1描述"
+      "description": "步骤1描述",
+      "success_criteria": "步骤1完成的具体可验证标准"
     }}
   ]
 }}
@@ -85,6 +89,7 @@ UPDATE_PLAN_PROMPT = """
 - 如果步骤已完成或者不再必要，请将其删除
 - 仔细阅读步骤结果以确定是否成功，如果不成功，请更改后续步骤
 - 根据步骤结果，你需要相应地更新计划步骤
+- **为更新的步骤保留或补充 `success_criteria`，描述该步骤完成的具体可验证标准**
 
 返回格式要求：
 - 必须返回符合以下 TypeScript 接口定义的 JSON 格式
@@ -99,6 +104,8 @@ interface UpdatePlanResponse {{
     id: string;
     /** 步骤描述 **/
     description: string;
+    /** 步骤验收标准，可选 **/
+    success_criteria?: string;
   }}>;
 }}
 ```
@@ -108,7 +115,8 @@ JSON输出示例：
   "steps": [
     {{
       "id": "1",
-      "description": "步骤1描述"
+      "description": "步骤1描述",
+      "success_criteria": "步骤1完成的具体可验证标准"
     }}
   ]
 }}

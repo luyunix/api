@@ -8,6 +8,14 @@ agent_config:
   max_iterations: 100
   max_retries: 3
   max_search_results: 10
+  context_window: 65536
+embedding_config:
+  enabled: false
+  base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
+  api_key: ""              # 填入 DASHSCOPE_API_KEY 以启用情景记忆
+  model_name: text-embedding-v3
+  dimension: 1024
+  batch_size: 32
 mcp_config:
   mcpServers:
     amap-maps-streamableHTTP:

@@ -18,9 +18,10 @@ from app.infrastructure.external.sandbox.docker_sandbox import DockerSandbox
 from app.infrastructure.external.search.bing_search import BingSearchEngine
 from app.infrastructure.external.task.redis_stream_task import RedisStreamTask
 from app.infrastructure.repositories.file_app_config_repository import FileAppConfigRepository
-from app.domain.services.memory.memory_budget import MemoryBudgetManager
-from app.domain.services.memory.memory_retriever import MemoryRetriever
+from app.domain.services.memory.episodic_memory_service import EpisodicMemoryService
+from app.domain.services.memory.memory_budget import MemoryCompactor
 from app.domain.services.memory.memory_summarizer import MemorySummarizer
+from app.infrastructure.external.embedder.openai_embedder import OpenAIEmbedder
 from app.infrastructure.memory.db_memory_batch_writer import DBMemoryBatchWriter
 from app.infrastructure.storage.cos import Cos, get_cos
 from app.infrastructure.storage.oss import Oss, get_oss
@@ -125,16 +126,10 @@ def get_agent_service(
         uow_factory=get_uow,
     )
 
-    # 3.创建 Token 预算管理器(预算设为 LLM max_tokens 的 90%,留出余量给输出)
-    budget_manager = MemoryBudgetManager(budget=int(llm.max_tokens * 0.9))
+    # 3.创建记忆压缩器 + 情景记忆服务
+    memory_compactor, episodic_memory_service = _build_memory_services(app_config, llm)
 
-    # 4.创建记忆摘要器(使用 LLM 为压缩后的消息生成智能摘要)
-    summarizer = MemorySummarizer(llm=llm)
-
-    # 5.创建记忆检索器(向量记忆,支持长程经验检索)
-    memory_retriever = MemoryRetriever(session_id="global", top_k=3)
-
-    # 6.实例Agent服务并返回
+    # 4.实例Agent服务并返回
     return AgentService(
         uow_factory=get_uow,
         llm=llm,
@@ -147,10 +142,51 @@ def get_agent_service(
         search_engine=BingSearchEngine(),
         file_storage=file_storage,
         memory_batch_writer=get_memory_batch_writer(),
-        budget_manager=budget_manager,
-        summarizer=summarizer,
-        memory_retriever=memory_retriever,
+        memory_compactor=memory_compactor,
+        episodic_memory_service=episodic_memory_service,
     )
+
+
+def _build_memory_services(app_config, llm):
+    """构建记忆压缩器与情景记忆服务
+
+    - 压缩预算 = context_window - max_tokens(输出) - reserve(1024)
+    - 情景记忆：embedding_config.enabled 时构建 Embedder + EpisodicMemoryService，
+      否则 EpisodicMemoryService 的 embedder 为 None（降级为空操作）。
+    """
+    # 1.记忆摘要器（压缩时生成 LLM 摘要）
+    summarizer = MemorySummarizer(llm=llm)
+
+    # 2.压缩预算（可用上下文）
+    usable_context = max(
+        1024,
+        app_config.agent_config.context_window - llm.max_tokens - 1024,
+    )
+    memory_compactor = MemoryCompactor(usable_context=usable_context, summarizer=summarizer)
+
+    # 3.Embedder（情景记忆启用时）
+    embedder = None
+    embedding_config = app_config.embedding_config
+    if embedding_config.enabled and embedding_config.api_key:
+        try:
+            embedder = OpenAIEmbedder(embedding_config)
+            logger.info(f"情景记忆已启用: model={embedding_config.model_name}, dim={embedding_config.dimension}")
+        except Exception as e:
+            logger.warning(f"初始化 Embedder 失败，情景记忆将不可用: {e}")
+            embedder = None
+    else:
+        logger.info("情景记忆未启用（embedding_config.enabled=false 或缺 api_key）")
+
+    # 4.情景记忆服务
+    episodic_memory_service = EpisodicMemoryService(
+        embedder=embedder,
+        uow_factory=get_uow,
+        llm=llm,
+        top_k=3,
+        max_distance=0.6,
+    )
+
+    return memory_compactor, episodic_memory_service
 
 
 def get_agent_service_cos(
@@ -169,16 +205,10 @@ def get_agent_service_cos(
         uow_factory=get_uow,
     )
 
-    # 3.创建 Token 预算管理器
-    budget_manager = MemoryBudgetManager(budget=int(llm.max_tokens * 0.9))
+    # 3.创建记忆压缩器 + 情景记忆服务
+    memory_compactor, episodic_memory_service = _build_memory_services(app_config, llm)
 
-    # 4.创建记忆摘要器
-    summarizer = MemorySummarizer(llm=llm)
-
-    # 5.创建记忆检索器
-    memory_retriever = MemoryRetriever(session_id="global", top_k=3)
-
-    # 6.实例Agent服务并返回
+    # 4.实例Agent服务并返回
     return AgentService(
         uow_factory=get_uow,
         llm=llm,
@@ -191,7 +221,6 @@ def get_agent_service_cos(
         search_engine=BingSearchEngine(),
         file_storage=file_storage,
         memory_batch_writer=get_memory_batch_writer(),
-        budget_manager=budget_manager,
-        summarizer=summarizer,
-        memory_retriever=memory_retriever,
+        memory_compactor=memory_compactor,
+        episodic_memory_service=episodic_memory_service,
     )

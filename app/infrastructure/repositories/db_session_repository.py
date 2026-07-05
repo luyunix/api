@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime
 from typing import List, Optional
 
@@ -11,6 +12,8 @@ from app.domain.models.memory import Memory
 from app.domain.models.session import Session, SessionStatus
 from app.domain.repositories.session_repository import SessionRepository
 from app.infrastructure.models import SessionModel
+
+logger = logging.getLogger(__name__)
 
 
 class DBSessionRepository(SessionRepository):
@@ -242,10 +245,10 @@ class DBSessionRepository(SessionRepository):
     async def save_memory(self, session_id: str, agent_name: str, memory: Memory) -> None:
         """存储或者更新会话中的记忆(字典直接覆盖)
 
-        存储新格式 {"system_messages": [...], "working_messages": [...], "episodic_notes": []}
+        存储格式 {"system_messages": [...], "working_messages": [...]}（episodic 瞬态不持久化）
         """
-        # 1.将memory转换为新格式json结构
-        memory_data = memory.to_legacy_dict()
+        # 1.将memory序列化为持久化结构（只含 system + working）
+        memory_data = memory.to_dict()
 
         # 2.构建要打补丁的字典
         patch_data = {agent_name: memory_data}
@@ -267,7 +270,7 @@ class DBSessionRepository(SessionRepository):
     async def get_memory(self, session_id: str, agent_name: str) -> Memory:
         """获取指定会话的agent记忆信息
 
-        兼容旧格式 {"messages": [...]} 和新格式 {"system_messages": [...], ...}
+        通过 Memory.from_dict 兼容三种历史格式（messages / system_messages+working / 新格式）。
         """
         # 1.查询会话记忆信息
         stmt = (
@@ -277,14 +280,8 @@ class DBSessionRepository(SessionRepository):
         result = await self.db_session.execute(stmt)
         memory_data = result.scalar_one_or_none()
 
-        # 2.如果存在记忆
+        # 2.存在则构建（自动兼容旧格式迁移），不存在则返回空记忆
         if memory_data:
-            # 检测旧格式（包含 messages 字段但不包含 system_messages）
-            if "messages" in memory_data and "system_messages" not in memory_data:
-                logger.info(f"检测到旧格式记忆,自动迁移: session={session_id}, agent={agent_name}")
-                return Memory._from_legacy_messages(memory_data.get("messages", []))
-            # 新格式
-            return Memory(**memory_data)
+            return Memory.from_dict(memory_data)
 
-        # 3.如果记忆不存在，则构建一个空记忆后返回
         return Memory()

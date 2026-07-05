@@ -1,4 +1,5 @@
 import logging
+import time
 from typing import AsyncGenerator, Optional, Callable
 
 from app.domain.external.browser import Browser
@@ -7,14 +8,13 @@ from app.domain.external.llm import LLM
 from app.domain.external.memory_batch_writer import MemoryBatchWriter
 from app.domain.external.sandbox import Sandbox
 from app.domain.external.search import SearchEngine
-from app.domain.services.memory.memory_budget import MemoryBudgetManager
-from app.domain.services.memory.memory_retriever import MemoryRetriever
-from app.domain.services.memory.memory_summarizer import MemorySummarizer
+from app.domain.services.memory.episodic_memory_service import EpisodicMemoryService
+from app.domain.services.memory.memory_budget import MemoryCompactor
 from app.domain.models.app_config import AgentConfig
 from app.domain.models.event import BaseEvent, PlanEvent, PlanEventStatus, TitleEvent, MessageEvent
 from app.domain.models.event import DoneEvent
 from app.domain.models.message import Message
-from app.domain.models.plan import Plan, ExecutionStatus
+from app.domain.models.plan import Plan, Step, ExecutionStatus
 from app.domain.models.session import SessionStatus
 from app.domain.services.agents.planner import PlannerAgent
 from app.domain.services.agents.react import ReActAgent
@@ -47,9 +47,8 @@ class PlannerReActFlow(BaseFlow):
             mcp_tool: MCPTool,  # mcp工具
             a2a_tool: A2ATool,  # a2a远程agent
             memory_batch_writer: MemoryBatchWriter | None = None,  # 记忆批量写入器
-            budget_manager: MemoryBudgetManager | None = None,  # Token 预算管理器
-            summarizer: MemorySummarizer | None = None,  # 记忆摘要器
-            memory_retriever: MemoryRetriever | None = None,  # 记忆检索器
+            memory_compactor: MemoryCompactor | None = None,  # 记忆压缩器（token 预算）
+            episodic_memory_service: EpisodicMemoryService | None = None,  # 情景记忆服务
     ) -> None:
         """构造函数，完成规划与执行流的初始化"""
         # 1.流初始化数据配置
@@ -58,6 +57,7 @@ class PlannerReActFlow(BaseFlow):
         self._session_id = session_id
         self.status = FlowStatus.IDLE
         self.plan: Optional[Plan] = None
+        self._start_time: Optional[float] = None
 
         # 2.初始化Agent预设工具列表
         tools = [
@@ -79,9 +79,8 @@ class PlannerReActFlow(BaseFlow):
             json_parser=json_parser,
             tools=tools,
             memory_batch_writer=memory_batch_writer,
-            budget_manager=budget_manager,
-            summarizer=summarizer,
-            memory_retriever=memory_retriever,
+            memory_compactor=memory_compactor,
+            episodic_memory_service=episodic_memory_service,
         )
         logger.debug(f"创建规划Agent成功, 会话id: {self._session_id}")
 
@@ -94,11 +93,13 @@ class PlannerReActFlow(BaseFlow):
             json_parser=json_parser,
             tools=tools,
             memory_batch_writer=memory_batch_writer,
-            budget_manager=budget_manager,
-            summarizer=summarizer,
-            memory_retriever=memory_retriever,
+            memory_compactor=memory_compactor,
+            episodic_memory_service=episodic_memory_service,
         )
         logger.debug(f"创建执行Agent成功, 会话id: {self._session_id}")
+
+        # 5.记忆依赖（情景记忆写入用）
+        self._episodic_memory_service = episodic_memory_service
 
     async def invoke(self, message: Message) -> AsyncGenerator[BaseEvent, None]:
         """传递消息，运行流，在六中调用planner&react智能体组合完成任务并返回对应事件"""
@@ -132,6 +133,9 @@ class PlannerReActFlow(BaseFlow):
         async with self._uow:
             await self._uow.session.update_status(self._session_id, SessionStatus.RUNNING)
 
+        # 5.1 记录任务开始时间，用于任务级超时检查
+        self._start_time = time.time()
+
         # 6.获取当前会话中最新事件
         self.plan = session.get_latest_plan()
         logger.info(f"Planner&ReAct流接收消息: {message.message[:50]}...")
@@ -141,6 +145,23 @@ class PlannerReActFlow(BaseFlow):
 
         # 8.创建死循环执行任务，根据流的不同状态执行不同的操作
         while True:
+            # 8.1 检查任务是否超时
+            if self._start_time is not None:
+                elapsed = time.time() - self._start_time
+                if elapsed > self._agent_config.task_timeout_seconds:
+                    logger.error(
+                        f"Planner&ReAct流任务超时，已运行 {elapsed:.1f}s，"
+                        f"超过 {self._agent_config.task_timeout_seconds}s，强制终止"
+                    )
+                    self.plan.status = ExecutionStatus.FAILED
+                    self.plan.error = f"任务执行超过 {self._agent_config.task_timeout_seconds} 秒，已终止"
+                    self.status = FlowStatus.COMPLETED
+                    yield ErrorEvent(
+                        error=f"任务执行超过 {self._agent_config.task_timeout_seconds} 秒，已终止"
+                    )
+                    yield PlanEvent(status=PlanEventStatus.COMPLETED, plan=self.plan)
+                    break
+
             # 9.如果流的状态为空闲，则只需要将状态修改为规划中
             if self.status == FlowStatus.IDLE:
                 logger.info(f"Planner&ReAct流状态从{FlowStatus.IDLE}变成{FlowStatus.PLANNING}")
@@ -188,6 +209,21 @@ class PlannerReActFlow(BaseFlow):
                 async for event in self.react.execute_step(self.plan, step, message):
                     yield event
 
+                # 20.1 提前完成检测：如果当前步骤结果包含提前完成标记，且全局目标已满足，则跳过剩余步骤
+                if (
+                    self._agent_config.enable_early_completion
+                    and step.result
+                    and self.react.detect_early_completion(step.result)
+                ):
+                    remaining_steps = [s for s in self.plan.steps if not s.done and s.id != step.id]
+                    if remaining_steps:
+                        logger.info(f"步骤 {step.id} 触发提前完成标记，检查全局目标是否已满足")
+                        goal_satisfied = await self._check_goal_satisfied(self.plan, step)
+                        if goal_satisfied:
+                            logger.info("全局目标已提前达成，跳过剩余步骤并进入总结")
+                            self.status = FlowStatus.SUMMARIZING
+                            continue
+
                 # 21.压缩执行Agent记忆，避免上下文腐化+消耗大量token
                 logger.info(f"压缩{self.react.name} Agent记忆/上下文")
                 await self.react.compact_memory()
@@ -215,6 +251,17 @@ class PlannerReActFlow(BaseFlow):
             elif self.status == FlowStatus.COMPLETED:
                 # 27.计划状态已完成则更新plan状态，并发送计划事件通知API已完成
                 self.plan.status = ExecutionStatus.COMPLETED
+
+                # 28.情景记忆学习：任务完成后提炼可复用经验写入 pgvector（学习闭环）
+                #    仅在情景记忆启用时执行，失败不影响主流程
+                if self._episodic_memory_service:
+                    try:
+                        await self._episodic_memory_service.index_task(
+                            self._session_id, self.react.name, self.plan, message
+                        )
+                    except Exception as e:
+                        logger.warning(f"情景记忆写入失败: {e}")
+
                 self.status = FlowStatus.IDLE
                 yield PlanEvent(status=PlanEventStatus.COMPLETED, plan=self.plan)
                 break
@@ -226,3 +273,33 @@ class PlannerReActFlow(BaseFlow):
     def done(self) -> bool:
         """只读属性，返回流是否运行结束"""
         return self.status == FlowStatus.IDLE
+
+    async def _check_goal_satisfied(self, plan: Plan, completed_step: Step) -> bool:
+        """轻量级检查：判断全局目标是否已被已完成的步骤满足"""
+        remaining = [
+            s.description for s in plan.steps
+            if not s.done and s.id != completed_step.id
+        ]
+        prompt = f"""
+你正在判断一个多步骤任务的全局目标是否已经提前达成。
+
+任务目标: {plan.goal}
+当前已完成步骤: {completed_step.description}
+该步骤结果摘要: {completed_step.result or "无"}
+剩余待执行步骤: {remaining or "无"}
+
+请仅回答 yes 或 no：当前已完成的步骤是否已经满足了全局任务目标？
+如果剩余步骤仍然必要，请回答 no。
+"""
+        try:
+            response = await self.planner._llm.invoke(
+                messages=[{"role": "user", "content": prompt}],
+                tools=None,
+            )
+            content = response.get("content", "").lower()
+            satisfied = "yes" in content or "是" in content
+            logger.info(f"提前完成检测: 全局目标是否已达成={satisfied}, LLM回复={content[:50]}")
+            return satisfied
+        except Exception as e:
+            logger.warning(f"提前完成检测调用LLM失败: {str(e)}")
+            return False

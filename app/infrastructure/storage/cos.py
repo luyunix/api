@@ -27,7 +27,6 @@ class Cos:
         # 2.校验必要配置是否存在，缺失时跳过初始化，避免本地/测试环境无配置导致服务无法启动
         if not self._settings.cos_region or not self._settings.cos_secret_id or not self._settings.cos_secret_key:
             logger.warning("Cos腾讯云对象存储配置不完整(REGION/SECRET_ID/SECRET_KEY)，已跳过初始化")
-            return
 
         try:
             # 3.创建cos配置
