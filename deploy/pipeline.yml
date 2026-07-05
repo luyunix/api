@@ -1,0 +1,114 @@
+# 云效流水线配置
+# 使用方式：
+# 1. 登录阿里云云效 https://www.aliyun.com/product/yunxiao
+# 2. 进入「流水线」-「新建流水线」-「导入 YAML」
+# 3. 粘贴本文件内容，并根据下方说明替换变量
+# 4. 在流水线「变量与缓存」中配置敏感信息
+#
+# 必需变量（在云效流水线设置中配置）：
+# - ACR_REGISTRY: 例如 registry.cn-hangzhou.aliyuncs.com
+# - ACR_NAMESPACE: 例如 faber
+# - ACR_USERNAME: ACR 登录用户名
+# - ACR_PASSWORD: ACR 登录密码
+# - ECS_HOST: ECS 公网/内网 IP
+# - ECS_USER: 登录 ECS 的用户名，例如 root
+# - ECS_SSH_PRIVATE_KEY: ECS 登录私钥（PEM 格式）
+
+stages:
+  build:
+    name: 构建并推送镜像
+    jobs:
+      build:
+        runsOn:
+          pool: default # 或使用自定义构建集群
+        steps:
+          - step: build@docker
+            name: 构建 Faber API 镜像
+            displayName: 构建镜像
+            inputs:
+              imageName: faber-api
+              dockerfilePath: Dockerfile
+              contextPath: .
+              tag: ${GIT_BRANCH}-${GIT_COMMIT} # 或 ${DATETIME}
+              registryHost: ${ACR_REGISTRY}
+              registryNamespace: ${ACR_NAMESPACE}
+              registryUsername: ${ACR_USERNAME}
+              registryPassword: ${ACR_PASSWORD}
+              push: true
+
+  deploy:
+    name: 部署到 ECS
+    jobs:
+      deploy:
+        runsOn:
+          pool: default
+        steps:
+          - step: scp@ssh
+            name: 同步部署文件到 ECS
+            displayName: 同步部署文件
+            inputs:
+              host: ${ECS_HOST}
+              user: ${ECS_USER}
+              privateKey: ${ECS_SSH_PRIVATE_KEY}
+              localPath: .
+              remotePath: /opt/faber
+              # 排除不需要上传到服务器的文件
+              excludes: |
+                .git
+                .github
+                .idea
+                .venv
+                __pycache__
+                tests
+                docs
+                *.md
+
+          - step: sshCommand@ssh
+            name: 执行远程部署脚本
+            displayName: 远程部署
+            inputs:
+              host: ${ECS_HOST}
+              user: ${ECS_USER}
+              privateKey: ${ECS_SSH_PRIVATE_KEY}
+              script: |
+                cd /opt/faber
+                chmod +x deploy/deploy.sh
+                # 将云效变量写入服务器 .env（仅首次部署或变量更新时需要）
+                cat > /opt/faber/.env <<'ENV_EOF'
+                ENV=production
+                LOG_LEVEL=INFO
+                APP_CONFIG_FILEPATH=config.yaml
+                SQLALCHEMY_DATABASE_URI=${SQLALCHEMY_DATABASE_URI}
+                REDIS_HOST=${REDIS_HOST}
+                REDIS_PORT=${REDIS_PORT}
+                REDIS_DB=${REDIS_DB}
+                REDIS_PASSWORD=${REDIS_PASSWORD}
+                OSS_ACCESS_KEY_ID=${OSS_ACCESS_KEY_ID}
+                OSS_ACCESS_KEY_SECRET=${OSS_ACCESS_KEY_SECRET}
+                OSS_ENDPOINT=${OSS_ENDPOINT}
+                OSS_BUCKET=${OSS_BUCKET}
+                OSS_DOMAIN=${OSS_DOMAIN}
+                SANDBOX_IMAGE=${SANDBOX_IMAGE}
+                SANDBOX_NAME_PREFIX=${SANDBOX_NAME_PREFIX}
+                SANDBOX_TTL_MINUTES=${SANDBOX_TTL_MINUTES}
+                SANDBOX_NETWORK=faber-network
+                LLM_BASE_URL=${LLM_BASE_URL}
+                LLM_API_KEY=${LLM_API_KEY}
+                LLM_MODEL_NAME=${LLM_MODEL_NAME}
+                LLM_TEMPERATURE=${LLM_TEMPERATURE}
+                LLM_MAX_TOKENS=${LLM_MAX_TOKENS}
+                MCP_AMAP_ENABLED=${MCP_AMAP_ENABLED}
+                MCP_AMAP_URL=${MCP_AMAP_URL}
+                MCP_JINA_ENABLED=${MCP_JINA_ENABLED}
+                MCP_JINA_API_KEY=${MCP_JINA_API_KEY}
+                ENV_EOF
+                # 执行部署
+                ACR_REGISTRY=${ACR_REGISTRY} ACR_NAMESPACE=${ACR_NAMESPACE} ACR_USERNAME=${ACR_USERNAME} ACR_PASSWORD=${ACR_PASSWORD} ./deploy/deploy.sh ${GIT_BRANCH}-${GIT_COMMIT}
+
+# 触发器：代码提交时自动触发
+triggers:
+  push:
+    branches:
+      include:
+        - main
+        - master

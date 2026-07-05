@@ -2,7 +2,7 @@ import asyncio
 import io
 import logging
 import uuid
-from typing import List, AsyncGenerator, Callable, BinaryIO
+from typing import Any, List, AsyncGenerator, Callable, BinaryIO
 
 from fastapi import UploadFile
 from pydantic import TypeAdapter

@@ -1,0 +1,99 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ${FULL_IMAGE:-faber-api:latest}
+    container_name: faber-api
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      # 强制容器内使用生产环境配置
+      ENV: production
+      LOG_LEVEL: INFO
+      # 如果未在 .env 中设置，默认使用云数据库（生产环境请覆盖）
+      SQLALCHEMY_DATABASE_URI: ${SQLALCHEMY_DATABASE_URI}
+      REDIS_HOST: ${REDIS_HOST}
+      REDIS_PORT: ${REDIS_PORT}
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      REDIS_DB: ${REDIS_DB}
+      # 沙箱相关配置
+      SANDBOX_IMAGE: ${SANDBOX_IMAGE:-faber-sandbox}
+      SANDBOX_NAME_PREFIX: ${SANDBOX_NAME_PREFIX:-faber-sandbox}
+      SANDBOX_NETWORK: ${SANDBOX_NETWORK:-faber-network}
+      SANDBOX_TTL_MINUTES: ${SANDBOX_TTL_MINUTES:-60}
+      # OSS 配置
+      OSS_ACCESS_KEY_ID: ${OSS_ACCESS_KEY_ID}
+      OSS_ACCESS_KEY_SECRET: ${OSS_ACCESS_KEY_SECRET}
+      OSS_ENDPOINT: ${OSS_ENDPOINT}
+      OSS_BUCKET: ${OSS_BUCKET}
+      OSS_DOMAIN: ${OSS_DOMAIN}
+      # LLM / MCP 配置会由 .env 注入，并覆盖 config.yaml 占位符
+    volumes:
+      # 关键：挂载宿主机 Docker socket，使 API 能动态创建沙箱容器
+      - /var/run/docker.sock:/var/run/docker.sock
+      # 挂载 config.yaml 模板（含占位符），容器内会读取并做环境变量插值
+      - ./config.yaml:/app/config.yaml:ro
+    networks:
+      - faber-network
+    depends_on:
+      postgres:
+        condition: service_healthy
+        required: false
+      redis:
+        condition: service_healthy
+        required: false
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/status"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # 本地开发时使用，生产环境请使用阿里云 RDS + 云数据库 Redis
+  postgres:
+    image: postgres:16-alpine
+    container_name: faber-postgres
+    profiles: ["local"]
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: faber
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - faber-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: faber-redis
+    profiles: ["local"]
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    networks:
+      - faber-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_data:
+
+networks:
+  faber-network:
+    name: faber-network
+    driver: bridge

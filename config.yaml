@@ -30,4 +30,22 @@ mcp_config:
       headers:
         Authorization: Bearer jina_133c673d569840d3b1e379a526eee6d4VKMVBI9J5HYE2xd4ys7i6ehZUNb6
 a2a_config:
-  a2a_servers: [ ]
+  a2a_servers:
+  - id: 8003772a-93a1-4a46-a433-be8afc9221b6
+    base_url: https://example.com/a2a
+    enabled: true
+  - id: d021af39-ce72-4c25-8c4d-aab8d702958a
+    base_url: https://example.com/a2a
+    enabled: true
+  - id: bd19ca75-35b3-4125-badf-4f14c4b814eb
+    base_url: https://example.com/a2a
+    enabled: true
+  - id: 509bf7bc-9a29-426d-9bbe-b3eb5684fd7a
+    base_url: https://example.com/a2a
+    enabled: true
+  - id: bf452e52-fe8a-4f6c-b489-f89df0185b36
+    base_url: https://example.com/a2a
+    enabled: true
+  - id: bc38c007-707b-46c9-bfdc-7507291f0fc9
+    base_url: https://example.com/a2a
+    enabled: true

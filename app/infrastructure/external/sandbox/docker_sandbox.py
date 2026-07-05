@@ -56,15 +56,20 @@ class DockerSandbox(Sandbox):
     async def _resolve_hostname_to_ip(cls, hostname: str) -> Optional[str]:
         """将docker容器主机/地址转换成ipv4格式数据"""
         try:
+            # 0.去除可能包含的端口号
+            host = hostname.split(":")[0] if hostname else hostname
+            if not host:
+                return None
+
             # 1.首先解析传递的hostname是不是ip
             try:
-                socket.inet_pton(socket.AF_INET, hostname)
-                return hostname
+                socket.inet_pton(socket.AF_INET, host)
+                return host
             except OSError:
                 pass
 
             # 2.使用socket获取地址信息
-            addr_info = socket.getaddrinfo(hostname, None, family=socket.AF_INET)
+            addr_info = socket.getaddrinfo(host, None, family=socket.AF_INET)
 
             # 3.判断地址信息是否存在，如果存在则返回第一个ipv4地址
             if addr_info and len(addr_info) > 0:
