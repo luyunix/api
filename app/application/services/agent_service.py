@@ -128,6 +128,32 @@ class AgentService:
         except Exception as e:
             logger.warning(f"会话[{session_id}]后台更新未读消息计数失败: {e}")
 
+    @staticmethod
+    def _message_mentions_attachment(message: Optional[str]) -> bool:
+        """判断用户消息是否明显在引用已上传/已关联的文件。"""
+        if not message:
+            return False
+
+        lower_message = message.lower()
+        keywords = [
+            "文件",
+            "附件",
+            "上传",
+            "读取",
+            "内容",
+            "file",
+            "attachment",
+            "upload",
+            "read",
+            ".txt",
+            ".md",
+            ".csv",
+            ".json",
+            ".xlsx",
+            ".pdf",
+        ]
+        return any(keyword in lower_message for keyword in keywords)
+
     async def chat(
             self,
             session_id: str,
@@ -166,9 +192,17 @@ class AgentService:
                         timestamp=timestamp or datetime.now(),
                     )
 
-                # bugfix:从文件数据库中查询数据并更新attachments实际内容, 并返回人类消息事件
+                # 从文件数据库中查询本次附件；若用户明显引用文件但本次请求未带附件，
+                # 使用当前会话已关联文件兜底，避免“已上传文件”仍被要求提供路径。
+                attachment_ids = attachments or []
                 async with self._uow:
-                    db_attachments = [await self._uow.file.get_by_id(id) for id in attachments]
+                    if attachment_ids:
+                        db_attachments = [await self._uow.file.get_by_id(id) for id in attachment_ids]
+                    elif self._message_mentions_attachment(message):
+                        refreshed_session = await self._uow.session.get_by_id(session_id)
+                        db_attachments = refreshed_session.files if refreshed_session else []
+                    else:
+                        db_attachments = []
 
                 # 7.创建一个人类消息事件
                 message_event = MessageEvent(

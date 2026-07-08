@@ -11,6 +11,7 @@ from app.domain.external.file_storage import FileStorage
 from app.domain.models.file import File
 from app.domain.repositories.uow import IUnitOfWork
 from app.infrastructure.storage.oss import Oss
+from core.config import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -90,3 +91,11 @@ class OssFileStorage(FileStorage):
         except Exception as e:
             logger.error(f"下载文件[{file_id}]失败: {str(e)}")
             raise
+
+    def get_public_url(self, file: File) -> str:
+        """获取文件可访问URL"""
+        settings = get_settings()
+        if settings.oss_domain:
+            return f"{settings.oss_domain.rstrip('/')}/{file.key}"
+        endpoint = settings.oss_endpoint.replace("https://", "").replace("http://", "")
+        return f"https://{self.bucket}.{endpoint}/{file.key}"

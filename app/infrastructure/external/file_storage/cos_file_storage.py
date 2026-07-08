@@ -11,6 +11,7 @@ from app.domain.external.file_storage import FileStorage
 from app.domain.models.file import File
 from app.domain.repositories.uow import IUnitOfWork
 from app.infrastructure.storage.cos import Cos
+from core.config import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -90,3 +91,10 @@ class CosFileStorage(FileStorage):
         except Exception as e:
             logger.error(f"下载文件[{file_id}]失败: {str(e)}")
             raise
+
+    def get_public_url(self, file: File) -> str:
+        """获取文件可访问URL"""
+        settings = get_settings()
+        if settings.cos_domain:
+            return f"{settings.cos_domain.rstrip('/')}/{file.key}"
+        return f"{settings.cos_scheme}://{self.bucket}.cos.{settings.cos_region}.myqcloud.com/{file.key}"

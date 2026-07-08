@@ -79,8 +79,9 @@ class OpenAILLM(LLM):
             logger.info(f"OpenAI客户端返回内容: {response.model_dump()}")
             return response.choices[0].message.model_dump()
         except Exception as e:
-            logger.error(f"调用OpenAI客户端发生错误: {str(e)}")
-            raise ServerRequestsError("调用OpenAI客户端向LLM发起请求出错")
+            # 记录完整堆栈，方便定位 LLM 调用失败原因（网络、鉴权、模型名等）
+            logger.exception(f"调用OpenAI客户端发生错误: {str(e)}")
+            raise ServerRequestsError(f"调用OpenAI客户端向LLM发起请求出错: {str(e)}")
 
 
 if __name__ == "__main__":

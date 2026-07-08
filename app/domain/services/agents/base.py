@@ -147,9 +147,9 @@ class BaseAgent(ABC):
                 await self._add_to_memory([filtered_message])
                 return filtered_message
             except Exception as e:
-                # 10.记录日志并睡眠指定的时间
-                logger.error(f"调用语言模型发生错误: {str(e)}")
-                error = str(e)
+                # 10.记录完整异常堆栈，便于排查 LLM 调用失败根因
+                logger.exception(f"调用语言模型发生错误: {type(e).__name__}: {str(e)}")
+                error = f"{type(e).__name__}: {str(e)}"
                 await asyncio.sleep(self._retry_interval)
                 continue
 
@@ -324,7 +324,7 @@ class BaseAgent(ABC):
                 and loop_index % self._agent_config.reflection_interval == 0
             ):
                 reflection_message = self._build_reflection_message(plan_context)
-                tool_messages.insert(0, {
+                tool_messages.append({
                     "role": "user",
                     "content": reflection_message,
                 })

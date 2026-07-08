@@ -112,7 +112,7 @@ def get_session_service() -> SessionService:
 
 
 def get_agent_service(
-        oss: Oss = Depends(get_oss),
+        cos: Cos = Depends(get_cos),
 ) -> AgentService:
     # 1.获取应用配置信息(读取配置需要实时获取,所以不配置缓存)
     app_config_repository = FileAppConfigRepository(config_path=settings.app_config_filepath)
@@ -120,9 +120,9 @@ def get_agent_service(
 
     # 2.构建依赖实例
     llm = OpenAILLM(app_config.llm_config)
-    file_storage = OssFileStorage(
-        bucket=settings.oss_bucket,
-        oss=oss,
+    file_storage = CosFileStorage(
+        bucket=settings.cos_bucket,
+        cos=cos,
         uow_factory=get_uow,
     )
 

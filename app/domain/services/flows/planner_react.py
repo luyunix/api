@@ -55,6 +55,7 @@ class PlannerReActFlow(BaseFlow):
         self._uow_factory = uow_factory
         self._uow = uow_factory()
         self._session_id = session_id
+        self._agent_config = agent_config  # 保存Agent配置，供超时/提前完成等逻辑使用
         self.status = FlowStatus.IDLE
         self.plan: Optional[Plan] = None
         self._start_time: Optional[float] = None

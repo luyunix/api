@@ -305,14 +305,23 @@ async def vnc_websocket(
         logger.info(f"连接WebSocket VNC： {sandbox_vnc_url}")
 
         # 5.创建上下文并连接到vnc
-        async with websockets.connect(sandbox_vnc_url) as sandbox_ws:
+        async with websockets.connect(
+                sandbox_vnc_url,
+                subprotocols=[selected_protocol] if selected_protocol else None,
+        ) as sandbox_ws:
             # 6.创建两个异步协程来完成数据的双向转发
             async def forward_to_sandbox():
                 try:
                     while True:
                         # 接收来自客户端的数据
-                        data = await websocket.receive_bytes()
-                        await sandbox_ws.send(data)
+                        data = await websocket.receive()
+                        if "bytes" in data:
+                            payload = data["bytes"]
+                        elif "text" in data:
+                            payload = data["text"]
+                        else:
+                            break
+                        await sandbox_ws.send(payload)
                 except WebSocketDisconnect:
                     logger.info(f"Web->VNC连接终端")
                 except Exception as forward_e:
@@ -323,7 +332,10 @@ async def vnc_websocket(
                     while True:
                         # 接收来自沙箱的数据并转发
                         data = await sandbox_ws.recv()
-                        await websocket.send_bytes(data)
+                        if isinstance(data, bytes):
+                            await websocket.send_bytes(data)
+                        else:
+                            await websocket.send_text(data)
                 except ConnectionClosed:
                     logger.info("VNC->Web连接关闭")
                 except Exception as forward_e:

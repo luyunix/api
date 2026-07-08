@@ -1,4 +1,4 @@
-from typing import Tuple, BinaryIO, Callable
+from typing import Tuple, BinaryIO, Callable, Optional
 
 from fastapi import UploadFile
 
@@ -21,9 +21,15 @@ class FileService:
         self._uow_factory = uow_factory
         self._uow = uow_factory()
 
-    async def upload_file(self, upload_file: UploadFile) -> File:
+    async def upload_file(self, upload_file: UploadFile, session_id: Optional[str] = None) -> File:
         """将传递的文件上传到阿里云oss并记录上传数据"""
-        return await self.file_storage.upload_file(upload_file=upload_file)
+        file = await self.file_storage.upload_file(upload_file=upload_file)
+
+        if session_id:
+            async with self._uow:
+                await self._uow.session.add_file(session_id, file)
+
+        return file
 
     async def get_file_info(self, file_id: str) -> File:
         """根据传递的文件id获取文件信息"""

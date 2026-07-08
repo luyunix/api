@@ -237,7 +237,11 @@ class AgentTaskRunner(TaskRunner):
             size=self._get_stream_size(io.BytesIO(screenshot)),
         ))
 
-        # 3.获取setting并组装完整URL
+        # 3.优先由具体存储实现生成可访问URL
+        if hasattr(self._file_storage, "get_public_url"):
+            return self._file_storage.get_public_url(file)
+
+        # 4.兼容旧存储实现
         settings = get_settings()
         return f"https://{settings.oss_bucket}.{settings.oss_endpoint}/{file.key}"
 
@@ -416,8 +420,14 @@ class AgentTaskRunner(TaskRunner):
             raise
         except Exception as e:
             # 14.记录日志并往任务队列/消息队列中写入异常事件并更新会话状态
-            logger.exception(f"AgentTaskRunner运行出错: {str(e)}")
-            await self._put_and_add_event(task, ErrorEvent(error=f"AgentTaskRunner出错: {str(e)}"))
+            error_msg = f"{type(e).__name__}: {str(e)}"
+            print(f"[DEBUG] AgentTaskRunner caught exception: {error_msg}", flush=True)
+            root_logger = logging.getLogger()
+            print(f"[DEBUG] root handlers={root_logger.handlers}, level={root_logger.level}", flush=True)
+            root_logger.error(f"[ROOT] AgentTaskRunner运行出错: {error_msg}")
+            logger.error(f"AgentTaskRunner运行出错: {error_msg}")
+            logger.exception(f"AgentTaskRunner运行出错详情:")
+            await self._put_and_add_event(task, ErrorEvent(error=f"AgentTaskRunner出错: {error_msg}"))
             async with self._uow:
                 await self._uow.session.update_status(self._session_id, SessionStatus.COMPLETED)
         finally:

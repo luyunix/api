@@ -47,6 +47,13 @@ class Settings(BaseSettings):
     sandbox_http_proxy: Optional[str] = None
     sandbox_no_proxy: Optional[str] = None
 
+    # LLM 配置（覆盖 config.yaml 中的 llm_config，占位值不落盘）
+    llm_base_url: Optional[str] = None
+    llm_api_key: Optional[str] = None
+    llm_model_name: Optional[str] = None
+    llm_temperature: Optional[float] = None
+    llm_max_tokens: Optional[int] = None
+
     # 使用pydantic v2的写法来完成环境变量信息的告知
     model_config = SettingsConfigDict(
         env_file=".env",

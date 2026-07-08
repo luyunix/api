@@ -16,6 +16,9 @@ You are executing the task:
 Note:
 - **It you that to do the task, not the user**
 - **You must use the language provided by user's message to execute the task**
+- If attachments is not empty, each item is a user-uploaded file path that is already available in the sandbox and can be passed directly to file or shell tools.
+- When the user asks to read a file, attachment, or uploaded file but the current step does not specify a path, use the file paths from attachments first instead of asking the user for a path.
+- If there is exactly one attachment and the user refers to "the file", "attachment", or "uploaded file", treat that attachment as the referenced file.
 - You must use message_notify_user tool to notify users within one sentence:
     - What tools you are going to use and what you are going to do with them
     - What you have done by tools
@@ -54,7 +57,7 @@ EXAMPLE JSON OUTPUT:
 
 Input:
 - message: the user's message, use this language for all text output
-- attachments: the user's attachments
+- attachments: the user's attachments; each line is a directly usable sandbox file path
 - task: the task to execute
 
 Output:

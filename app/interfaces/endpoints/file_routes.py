@@ -1,13 +1,14 @@
 import logging
 import urllib.parse
+from typing import Optional
 
-from fastapi import APIRouter, UploadFile, File, Depends
+from fastapi import APIRouter, UploadFile, File, Depends, Form
 from starlette.responses import StreamingResponse
 
 from app.application.services.file_service import FileService
 from app.domain.models.file import File as FileInfo
 from app.interfaces.schemas import Response
-from app.interfaces.service_dependencies import get_file_service, get_file_service_cos
+from app.interfaces.service_dependencies import get_file_service_cos
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/files", tags=["文件模块"])
@@ -21,10 +22,11 @@ router = APIRouter(prefix="/files", tags=["文件模块"])
 )
 async def upload_file(
         file: UploadFile = File(...),
+        session_id: Optional[str] = Form(default=None),
         file_service: FileService = Depends(get_file_service_cos),
 ) -> Response[FileInfo]:
     """文件上传接口，传递文件返回文件的File信息"""
-    fileinfo = await file_service.upload_file(upload_file=file)
+    fileinfo = await file_service.upload_file(upload_file=file, session_id=session_id)
     return Response.success(
         msg="上传文件成功",
         data=fileinfo,
@@ -39,7 +41,7 @@ async def upload_file(
 )
 async def get_file_info(
         file_id: str,
-        file_service: FileService = Depends(get_file_service),
+        file_service: FileService = Depends(get_file_service_cos),
 ) -> Response[FileInfo]:
     """获取指定会话中对应文件的基础信息"""
     fileinfo = await file_service.get_file_info(file_id)

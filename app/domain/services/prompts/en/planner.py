@@ -17,6 +17,9 @@ Note:
 - Your plan must be simple and concise, don't add any unnecessary details.
 - Your steps must be atomic and independent, and the next executor can execute them one by one use the tools.
 - You need to determine whether a task can be broken down into multiple steps. If it can, return multiple steps; otherwise, return a single step.
+- If attachments is not empty, each item is a user-uploaded file path that is already available in the sandbox.
+- When the user asks to read a file, attachment, or uploaded file but does not specify a path in the message, use the file paths from attachments instead of asking the user for a path.
+- If there is exactly one attachment and the user refers to "the file", "attachment", or "uploaded file", treat that attachment as the referenced file.
 
 Return format requirements:
 - Must return JSON format that complies with the following TypeScript interface
@@ -60,7 +63,7 @@ EXAMPLE JSON OUTPUT:
 
 Input:
 - message: the user's message
-- attachments: the user's attachments
+- attachments: the user's attachments; each line is a directly usable sandbox file path
 
 Output:
 - the plan in json format

@@ -8,6 +8,7 @@ from filelock import FileLock
 from app.application.errors.exceptions import ServerRequestsError
 from app.domain.models.app_config import AppConfig, LLMConfig, AgentConfig, MCPConfig, A2AConfig
 from app.domain.repositories.app_config_repository import AppConfigRepository
+from core.config import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -45,10 +46,30 @@ class FileAppConfigRepository(AppConfigRepository):
             # 2.打开配置文件并加载为AppConfig
             with open(self._config_path, "r", encoding="utf-8") as f:
                 data = yaml.safe_load(f)
-                return AppConfig.model_validate(data) if data else None
+                app_config = AppConfig.model_validate(data) if data else None
+                if app_config:
+                    self._apply_env_overrides(app_config)
+                return app_config
         except Exception as e:
             logger.error(f"读取应用配置失败: {str(e)}")
             raise ServerRequestsError("读取应用配置失败，请稍后尝试")
+
+    @staticmethod
+    def _apply_env_overrides(app_config: AppConfig) -> None:
+        """用 .env / 环境变量中的非空 LLM 配置覆盖文件配置。"""
+        settings = get_settings()
+        llm_config_data = app_config.llm_config.model_dump(mode="json")
+        if settings.llm_base_url:
+            llm_config_data["base_url"] = settings.llm_base_url
+        if settings.llm_api_key:
+            llm_config_data["api_key"] = settings.llm_api_key
+        if settings.llm_model_name:
+            llm_config_data["model_name"] = settings.llm_model_name
+        if settings.llm_temperature is not None:
+            llm_config_data["temperature"] = settings.llm_temperature
+        if settings.llm_max_tokens is not None:
+            llm_config_data["max_tokens"] = settings.llm_max_tokens
+        app_config.llm_config = LLMConfig.model_validate(llm_config_data)
 
     def save(self, app_config: AppConfig) -> None:
         """将app_config存储到本地yaml配置"""
