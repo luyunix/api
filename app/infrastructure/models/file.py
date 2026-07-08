@@ -27,6 +27,7 @@ class FileModel(Base):
         primary_key=True,
         default=lambda: str(uuid.uuid4()),
     )  # 文件id
+    user_id: Mapped[str] = mapped_column(String(255), nullable=True, index=True)  # 所属用户id
     filename: Mapped[str] = mapped_column(
         String(255),
         nullable=False,

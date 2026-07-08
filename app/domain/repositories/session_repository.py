@@ -14,7 +14,7 @@ class SessionRepository(Protocol):
         """存储或更新传递进来的会话"""
         ...
 
-    async def get_all(self) -> List[Session]:
+    async def get_all(self, user_id: Optional[str] = None) -> List[Session]:
         """获取所有会话列表信息"""
         ...
 

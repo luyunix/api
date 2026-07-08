@@ -8,6 +8,8 @@ from app.domain.repositories.uow import IUnitOfWork
 from .db_episodic_memory_repository import DBEpisodicMemoryRepository
 from .db_file_repository import DBFileRepository
 from .db_session_repository import DBSessionRepository
+from .db_user_repository import DBUserRepository
+from .db_user_config_repository import DBUserConfigRepository
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +39,8 @@ class DBUnitOfWork(IUnitOfWork):
         self.file = DBFileRepository(db_session=self.db_session)
         self.session = DBSessionRepository(db_session=self.db_session)
         self.episodic_memory = DBEpisodicMemoryRepository(db_session=self.db_session)
+        self.user = DBUserRepository(db_session=self.db_session)
+        self.user_config = DBUserConfigRepository(db_session=self.db_session)
 
         return self
 

@@ -57,11 +57,15 @@ class A2AClientManager:
         try:
             # 3.初始化httpx客户端
             self._httpx_client = await self._exit_stack.enter_async_context(
-                httpx.AsyncClient(timeout=600),
+                httpx.AsyncClient(timeout=httpx.Timeout(5.0, connect=3.0)),
             )
 
             # 4.记录日志并连接所有配置的a2a服务获取卡片信息
-            logger.info(f"加载{len(self._a2a_config.a2a_servers)}个A2A服务")
+            loadable_servers = [
+                server for server in self._a2a_config.a2a_servers
+                if server.enabled and server.available
+            ]
+            logger.info(f"加载{len(loadable_servers)}个可用的A2A服务")
             await self._get_a2a_agent_cards()
             self._initialized = True
             logger.info(f"A2A客户端加载成功")
@@ -73,10 +77,13 @@ class A2AClientManager:
         """根据配置连接所有a2a服务器获取AgentCard信息"""
         # 1.循环遍历所有的a2a服务
         for a2a_server_config in self._a2a_config.a2a_servers:
+            if not a2a_server_config.enabled or not a2a_server_config.available:
+                continue
             try:
                 # 2.调用httpx客户端发起请求
                 agent_card_response = await self._httpx_client.get(
-                    f"{a2a_server_config.base_url}/.well-known/agent-card.json"
+                    f"{a2a_server_config.base_url}/.well-known/agent-card.json",
+                    timeout=5.0,
                 )
                 agent_card_response.raise_for_status()
                 agent_card = agent_card_response.json()

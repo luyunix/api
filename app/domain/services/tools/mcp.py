@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import os
 from contextlib import AsyncExitStack
@@ -72,11 +73,20 @@ class MCPClientManager:
 
     async def _connect_mcp_servers(self) -> None:
         """根据配置连接所有MCP服务"""
-        # 1.循环遍历传递进来的所有MCP服务器，不用理会enabled的状态，因为在外部会执行筛选
+        # 1.循环遍历传递进来的所有MCP服务器，禁用项不参与 Agent 运行时初始化
         for server_name, server_config in self._mcp_config.mcpServers.items():
+            if not server_config.enabled:
+                logger.info(f"MCP服务器[{server_name}]已禁用，跳过连接")
+                continue
+            if not server_config.available:
+                logger.info(f"MCP服务器[{server_name}]未通过连接测试，跳过连接")
+                continue
             try:
                 # 2.根据服务名字+服务配置连接到MCP服务器
-                await self._connect_mcp_server(server_name, server_config)
+                await asyncio.wait_for(
+                    self._connect_mcp_server(server_name, server_config),
+                    timeout=10,
+                )
             except Exception as e:
                 # 3.记录错误日志并跳过错误的MCP服务器
                 logger.error(f"连接MCP服务器[{server_name}]出错: {str(e)}")

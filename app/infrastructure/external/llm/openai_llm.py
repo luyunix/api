@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 class OpenAILLM(LLM):
     """基于OpenAI SDK/兼容OpenAI格式的LLM调用类"""
 
-    def __init__(self, llm_config: LLMConfig, **kwargs) -> None:
+    def __init__(self, llm_config: LLMConfig, request_timeout: int = 3600, **kwargs) -> None:
         """构造函数，完成异步OpenAI客户端的创建和参数初始化"""
         # 1.初始化异步客户端
         self._client = AsyncOpenAI(
@@ -26,7 +26,7 @@ class OpenAILLM(LLM):
         self._model_name = llm_config.model_name
         self._temperature = llm_config.temperature
         self._max_tokens = llm_config.max_tokens
-        self._timeout = 3600
+        self._timeout = request_timeout
 
     @property
     def model_name(self) -> str:

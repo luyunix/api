@@ -4,6 +4,8 @@ from typing import TypeVar
 from .episodic_memory_repository import EpisodicMemoryRepository
 from .file_repository import FileRepository
 from .session_repository import SessionRepository
+from .user_repository import UserRepository
+from .user_config_repository import UserConfigRepository
 
 T = TypeVar("T", bound="IUnitOfWork")
 
@@ -13,6 +15,8 @@ class IUnitOfWork(ABC):
     file: FileRepository
     session: SessionRepository
     episodic_memory: EpisodicMemoryRepository
+    user: UserRepository
+    user_config: UserConfigRepository
 
     @abstractmethod
     async def commit(self):

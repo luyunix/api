@@ -157,6 +157,7 @@ class AgentService:
     async def chat(
             self,
             session_id: str,
+            user_id: str,
             message: Optional[str] = None,
             attachments: Optional[List[str]] = None,
             latest_event_id: Optional[str] = None,
@@ -169,6 +170,9 @@ class AgentService:
                 session = await self._uow.session.get_by_id(session_id)
             if not session:
                 logger.error(f"尝试与不存在的任务会话[{session_id}]对话")
+                raise RuntimeError("任务会话不存在, 请核实后重试")
+            if session.user_id != user_id:
+                logger.error(f"用户[{user_id}]尝试访问不属于自己的会话[{session_id}]")
                 raise RuntimeError("任务会话不存在, 请核实后重试")
 
             # 2.获取对应会话任务
@@ -191,13 +195,17 @@ class AgentService:
                         message=message,
                         timestamp=timestamp or datetime.now(),
                     )
+                    await self._uow.session.update_status(session_id, SessionStatus.RUNNING)
 
                 # 从文件数据库中查询本次附件；若用户明显引用文件但本次请求未带附件，
                 # 使用当前会话已关联文件兜底，避免“已上传文件”仍被要求提供路径。
                 attachment_ids = attachments or []
                 async with self._uow:
                     if attachment_ids:
-                        db_attachments = [await self._uow.file.get_by_id(id) for id in attachment_ids]
+                        db_attachments = [
+                            file for id in attachment_ids
+                            if (file := await self._uow.file.get_by_id(id)) and file.user_id == user_id
+                        ]
                     elif self._message_mentions_attachment(message):
                         refreshed_session = await self._uow.session.get_by_id(session_id)
                         db_attachments = refreshed_session.files if refreshed_session else []
@@ -228,11 +236,13 @@ class AgentService:
             logger.info(f"会话[{session_id}]任务实例: {task}")
 
             # 11.从任务的输出流中读取数据
-            while task and not task.done:
+            while task:
                 # 12.从输出消息队列中获取数据
-                event_id, event_str = await task.output_stream.get(start_id=latest_event_id, block_ms=0)
+                event_id, event_str = await task.output_stream.get(start_id=latest_event_id, block_ms=1000)
                 latest_event_id = event_id
                 if event_str is None:
+                    if task.done:
+                        break
                     logger.debug(f"在会话[{session_id}]输出队列中未发现事件内容")
                     continue
 
@@ -259,6 +269,7 @@ class AgentService:
             try:
                 async with self._uow:
                     await self._uow.session.add_event(session_id, event)
+                    await self._uow.session.update_status(session_id, SessionStatus.COMPLETED)
             except (asyncio.CancelledError, Exception) as add_err:
                 logger.warning(f"会话[{session_id}]添加错误事件失败(可能是客户端断开连接): {add_err}")
             yield event
@@ -276,13 +287,16 @@ class AgentService:
                 # 事件循环已关闭（如应用正在关闭），无法创建后台任务
                 logger.warning(f"会话[{session_id}]无法创建后台任务更新未读消息计数")
 
-    async def stop_session(self, session_id: str) -> None:
+    async def stop_session(self, session_id: str, user_id: str) -> None:
         """根据传递的会话id停止指定会话"""
         # 1.查找会话是否存在
         async with self._uow:
             session = await self._uow.session.get_by_id(session_id)
         if not session:
             logger.error(f"尝试停止不存在的会话[{session_id}]")
+            raise RuntimeError("任务会话不存在, 请核实后重试")
+        if session.user_id != user_id:
+            logger.error(f"用户[{user_id}]尝试停止不属于自己的会话[{session_id}]")
             raise RuntimeError("任务会话不存在, 请核实后重试")
 
         # 2.根据会话获取任务信息

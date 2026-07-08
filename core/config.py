@@ -12,6 +12,11 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     app_config_filepath: str = "config.yaml"
 
+    # 认证配置
+    auth_secret_key: str = "change-me-in-production"
+    auth_algorithm: str = "HS256"
+    auth_access_token_expire_minutes: int = 60 * 24 * 7
+
     # 数据库相关配置
     sqlalchemy_database_uri: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/faber"
 

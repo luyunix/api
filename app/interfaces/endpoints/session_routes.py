@@ -10,8 +10,11 @@ from starlette.websockets import WebSocket, WebSocketDisconnect
 from websockets import ConnectionClosed
 
 from app.application.errors.exceptions import NotFoundError
+from app.application.services.auth_service import AuthService
 from app.application.services.agent_service import AgentService
 from app.application.services.session_service import SessionService
+from app.domain.models.user import User
+from app.interfaces.auth import get_current_user
 from app.interfaces.schemas import Response
 from app.interfaces.schemas.event import EventMapper
 from app.interfaces.schemas.session import (
@@ -22,6 +25,7 @@ from app.interfaces.schemas.session import (
     GetSessionResponse, GetSessionFilesResponse, FileReadResponse, FileReadRequest, ShellReadResponse, ShellReadRequest,
 )
 from app.interfaces.service_dependencies import get_session_service, get_agent_service
+from app.infrastructure.storage.postgres import get_uow
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/sessions", tags=["会话模块"])
@@ -37,10 +41,11 @@ SESSION_SLEEP_INTERVAL = 5
     description="创建一个空白的新任务会话",
 )
 async def create_session(
+        current_user: User = Depends(get_current_user),
         session_service: SessionService = Depends(get_session_service),
 ) -> Response[CreateSessionResponse]:
     """创建一个空白的新任务会话"""
-    session = await session_service.create_session()
+    session = await session_service.create_session(current_user.id)
     return Response.success(
         msg="创建任务会话成功",
         data=CreateSessionResponse(session_id=session.id)
@@ -53,6 +58,7 @@ async def create_session(
     description="间隔指定时间流式获取所有会话基础信息列表",
 )
 async def stream_sessions(
+        current_user: User = Depends(get_current_user),
         session_service: SessionService = Depends(get_session_service),
 ) -> EventSourceResponse:
     """间隔指定时间流式获取所有会话基础信息列表"""
@@ -61,7 +67,7 @@ async def stream_sessions(
         """定义一个异步迭代器，用于获取所有会话列表"""
         while True:
             # 1.获取所有会话列表
-            sessions = await session_service.get_all_sessions()
+            sessions = await session_service.get_all_sessions(current_user.id)
 
             # 2.循环遍历并组装数据
             session_items = [
@@ -95,10 +101,11 @@ async def stream_sessions(
     description="获取Faber项目中所有任务会话基础信息列表",
 )
 async def get_all_sessions(
+        current_user: User = Depends(get_current_user),
         session_service: SessionService = Depends(get_session_service),
 ) -> Response[ListSessionResponse]:
     """获取Faber项目中所有任务会话基础信息列表"""
-    sessions = await session_service.get_all_sessions()
+    sessions = await session_service.get_all_sessions(current_user.id)
     session_items = [
         ListSessionItem(
             session_id=session.id,
@@ -124,10 +131,11 @@ async def get_all_sessions(
 )
 async def clear_unread_message_count(
         session_id: str,
+        current_user: User = Depends(get_current_user),
         session_service: SessionService = Depends(get_session_service),
 ) -> Response[Optional[Dict]]:
     """根据传递的会话id清空未读消息数"""
-    await session_service.clear_unread_message_count(session_id)
+    await session_service.clear_unread_message_count(session_id, current_user.id)
     return Response.success(msg="清除未读消息数成功")
 
 
@@ -139,10 +147,11 @@ async def clear_unread_message_count(
 )
 async def delete_session(
         session_id: str,
+        current_user: User = Depends(get_current_user),
         session_service: SessionService = Depends(get_session_service),
 ) -> Response[Optional[Dict]]:
     """根据传递的会话id删除指定任务会话"""
-    await session_service.delete_session(session_id)
+    await session_service.delete_session(session_id, current_user.id)
     return Response.success(msg="删除任务会话成功")
 
 
@@ -154,6 +163,7 @@ async def delete_session(
 async def chat(
         session_id: str,
         request: ChatRequest,
+        current_user: User = Depends(get_current_user),
         agent_service: AgentService = Depends(get_agent_service),
 ) -> EventSourceResponse:
     """根据传递的会话id+chat请求数据向指定会话发起聊天请求"""
@@ -163,6 +173,7 @@ async def chat(
         # 1.调用Agent服务发起聊天
         async for event in agent_service.chat(
                 session_id=session_id,
+                user_id=current_user.id,
                 message=request.message,
                 attachments=request.attachments,
                 latest_event_id=request.event_id,
@@ -187,10 +198,11 @@ async def chat(
 )
 async def get_session(
         session_id: str,
+        current_user: User = Depends(get_current_user),
         session_service: SessionService = Depends(get_session_service),
 ) -> Response[GetSessionResponse]:
     """传递指定会话id获取该会话的对话详情"""
-    session = await session_service.get_session(session_id)
+    session = await session_service.get_session(session_id, current_user.id)
     if not session:
         raise NotFoundError("该会话不存在，请核实后重试")
     return Response.success(
@@ -212,10 +224,11 @@ async def get_session(
 )
 async def stop_session(
         session_id: str,
+        current_user: User = Depends(get_current_user),
         agent_service: AgentService = Depends(get_agent_service),
 ) -> Response[Optional[Dict]]:
     """根据传递的指定会话id停止对应任务会话"""
-    await agent_service.stop_session(session_id)
+    await agent_service.stop_session(session_id, current_user.id)
     return Response.success(msg="停止任务会话成功")
 
 
@@ -227,10 +240,11 @@ async def stop_session(
 )
 async def get_session_files(
         session_id: str,
+        current_user: User = Depends(get_current_user),
         session_service: SessionService = Depends(get_session_service),
 ) -> Response[GetSessionFilesResponse]:
     """获取指定任务会话文件列表信息"""
-    files = await session_service.get_session_files(session_id)
+    files = await session_service.get_session_files(session_id, current_user.id)
     return Response.success(
         msg="获取会话文件列表成功",
         data=GetSessionFilesResponse(files=files)
@@ -246,10 +260,11 @@ async def get_session_files(
 async def read_file(
         session_id: str,
         request: FileReadRequest,
+        current_user: User = Depends(get_current_user),
         session_service: SessionService = Depends(get_session_service),
 ) -> Response[FileReadResponse]:
     """根据传递的会话id+文件路径查看沙箱中文件的内容信息"""
-    result = await session_service.read_file(session_id, request.filepath)
+    result = await session_service.read_file(session_id, current_user.id, request.filepath)
     return Response.success(
         msg="获取会话文件内容成功",
         data=result
@@ -265,10 +280,11 @@ async def read_file(
 async def read_shell_output(
         session_id: str,
         request: ShellReadRequest,
+        current_user: User = Depends(get_current_user),
         session_service: SessionService = Depends(get_session_service),
 ) -> Response[ShellReadResponse]:
     """查看会话的shell内容输出"""
-    result = await session_service.read_shell_output(session_id, request.session_id)
+    result = await session_service.read_shell_output(session_id, current_user.id, request.session_id)
     return Response.success(
         msg="获取Shell内容输出结果成功",
         data=result,
@@ -284,6 +300,26 @@ async def vnc_websocket(
         session_service: SessionService = Depends(get_session_service),
 ) -> None:
     """VNC Websocket端点，用于建立与沙箱环境的vnc连接，并双向转发数据"""
+    token = websocket.query_params.get("token")
+    user_id = None
+    if not token:
+        await websocket.close(code=1008, reason="请先登录")
+        return
+    try:
+        payload = AuthService.decode_access_token(token)
+        user_id = payload.get("sub")
+        if not user_id:
+            await websocket.close(code=1008, reason="无效的登录凭证")
+            return
+        async with get_uow() as uow:
+            user = await uow.user.get_by_id(user_id)
+        if not user or not user.is_active:
+            await websocket.close(code=1008, reason="用户不存在或已被禁用")
+            return
+    except Exception:
+        await websocket.close(code=1008, reason="无效的登录凭证")
+        return
+
     # 1.从客户端noVNC接收子协议
     protocols_str = websocket.headers.get("sec-websocket-protocol", "")
     protocols = [p.strip() for p in protocols_str.split(",")]
@@ -301,7 +337,7 @@ async def vnc_websocket(
 
     try:
         # 4.获取对应会话的vnc链接
-        sandbox_vnc_url = await session_service.get_vnc_url(session_id)
+        sandbox_vnc_url = await session_service.get_vnc_url(session_id, user_id)
         logger.info(f"连接WebSocket VNC： {sandbox_vnc_url}")
 
         # 5.创建上下文并连接到vnc

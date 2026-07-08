@@ -5,9 +5,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.application.services.agent_service import AgentService
 from app.application.services.app_config_service import AppConfigService
+from app.application.services.auth_service import AuthService
 from app.application.services.file_service import FileService
 from app.application.services.session_service import SessionService
 from app.application.services.status_service import StatusService
+from app.domain.models.user import User
 from app.infrastructure.external.file_storage.cos_file_storage import CosFileStorage
 from app.infrastructure.external.file_storage.oss_file_storage import OssFileStorage
 from app.infrastructure.external.health_checker.postgres_health_checker import PostgresHealthChecker
@@ -28,6 +30,7 @@ from app.infrastructure.storage.oss import Oss, get_oss
 from app.infrastructure.storage.postgres import get_db_session, get_uow
 from app.infrastructure.storage.redis import RedisClient, get_redis
 from core.config import get_settings
+from app.interfaces.auth import get_current_user
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -48,14 +51,20 @@ def get_memory_batch_writer() -> DBMemoryBatchWriter:
     return _memory_batch_writer
 
 
-def get_app_config_service() -> AppConfigService:
+def get_app_config_service(
+        current_user: User = Depends(get_current_user),
+) -> AppConfigService:
     """获取应用配置服务"""
     # 1.获取数据仓库并打印日志
     logger.info("加载获取AppConfigService")
     file_app_config_repository = FileAppConfigRepository(settings.app_config_filepath)
 
     # 2.实例化AppConfigService
-    return AppConfigService(app_config_repository=file_app_config_repository)
+    return AppConfigService(
+        app_config_repository=file_app_config_repository,
+        uow_factory=get_uow,
+        user_id=current_user.id,
+    )
 
 
 def get_status_service(
@@ -70,6 +79,11 @@ def get_status_service(
     # 2.创建服务并返回
     logger.info("加载获取StatusService")
     return StatusService(checkers=[postgres_checker, redis_checker])
+
+
+def get_auth_service() -> AuthService:
+    """获取认证服务。"""
+    return AuthService(uow_factory=get_uow)
 
 
 def get_file_service(
@@ -111,12 +125,18 @@ def get_session_service() -> SessionService:
     return SessionService(uow_factory=get_uow, sandbox_cls=DockerSandbox)
 
 
-def get_agent_service(
+async def get_agent_service(
         cos: Cos = Depends(get_cos),
+        current_user: User = Depends(get_current_user),
 ) -> AgentService:
     # 1.获取应用配置信息(读取配置需要实时获取,所以不配置缓存)
     app_config_repository = FileAppConfigRepository(config_path=settings.app_config_filepath)
-    app_config = app_config_repository.load()
+    app_config_service = AppConfigService(
+        app_config_repository=app_config_repository,
+        uow_factory=get_uow,
+        user_id=current_user.id,
+    )
+    app_config = await app_config_service.get_app_config()
 
     # 2.构建依赖实例
     llm = OpenAILLM(app_config.llm_config)
@@ -189,13 +209,19 @@ def _build_memory_services(app_config, llm):
     return memory_compactor, episodic_memory_service
 
 
-def get_agent_service_cos(
+async def get_agent_service_cos(
         cos: Cos = Depends(get_cos),
+        current_user: User = Depends(get_current_user),
 ) -> AgentService:
     """使用腾讯云COS的Agent服务"""
     # 1.获取应用配置信息(读取配置需要实时获取,所以不配置缓存)
     app_config_repository = FileAppConfigRepository(config_path=settings.app_config_filepath)
-    app_config = app_config_repository.load()
+    app_config_service = AppConfigService(
+        app_config_repository=app_config_repository,
+        uow_factory=get_uow,
+        user_id=current_user.id,
+    )
+    app_config = await app_config_service.get_app_config()
 
     # 2.构建依赖实例
     llm = OpenAILLM(app_config.llm_config)

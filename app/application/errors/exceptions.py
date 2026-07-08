@@ -26,6 +26,20 @@ class BadRequestError(AppException):
         super().__init__(status_code=400, code=400, msg=msg)
 
 
+class UnauthorizedError(AppException):
+    """未认证或认证失败"""
+
+    def __init__(self, msg: str = "请先登录"):
+        super().__init__(status_code=401, code=401, msg=msg)
+
+
+class ForbiddenError(AppException):
+    """无权限访问资源"""
+
+    def __init__(self, msg: str = "无权限访问该资源"):
+        super().__init__(status_code=403, code=403, msg=msg)
+
+
 class NotFoundError(AppException):
     """资源未找到错误"""
 

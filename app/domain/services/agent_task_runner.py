@@ -196,9 +196,13 @@ class AgentTaskRunner(TaskRunner):
             # 5.上传文件到文件存储桶
             file = await self._file_storage.upload_file(upload_file)
             file.filepath = filepath
+            async with self._uow:
+                session = await self._uow.session.get_by_id(self._session_id)
+            file.user_id = session.user_id if session else None
 
             # 6.往会话中新增一个文件信息
             async with self._uow:
+                await self._uow.file.save(file)
                 await self._uow.session.add_file(self._session_id, file)
             return file
         except Exception as e:

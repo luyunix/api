@@ -1,6 +1,9 @@
 from fastapi import APIRouter
 
-from . import status_routes, app_config_routes, file_routes, session_routes
+from fastapi import Depends
+
+from app.interfaces.auth import get_current_user
+from . import status_routes, app_config_routes, file_routes, session_routes, auth_routes
 
 
 def create_api_routes() -> APIRouter:
@@ -10,7 +13,8 @@ def create_api_routes() -> APIRouter:
 
     # 2.将各个模块添加到api_router中
     api_router.include_router(status_routes.router)
-    api_router.include_router(app_config_routes.router)
+    api_router.include_router(auth_routes.router)
+    api_router.include_router(app_config_routes.router, dependencies=[Depends(get_current_user)])
     api_router.include_router(file_routes.router)
     api_router.include_router(session_routes.router)
 

@@ -15,9 +15,10 @@ from app.infrastructure.storage.cos import get_cos
 from app.infrastructure.storage.oss import get_oss
 from app.infrastructure.storage.postgres import get_postgres
 from app.infrastructure.storage.redis import get_redis
+from app.infrastructure.external.task.redis_stream_task import RedisStreamTask
 from app.interfaces.endpoints.routes import router
 from app.interfaces.errors.exception_handlers import register_exception_handlers
-from app.interfaces.service_dependencies import get_agent_service, get_memory_batch_writer
+from app.interfaces.service_dependencies import get_memory_batch_writer
 from core.config import get_settings
 
 
@@ -119,7 +120,7 @@ async def lifespan(app: FastAPI):
         try:
             # 8.等待agent服务关闭
             logger.info("Faber正在关闭")
-            await asyncio.wait_for(get_agent_service().shutdown(), timeout=30.0)
+            await asyncio.wait_for(RedisStreamTask.destroy(), timeout=30.0)
             logger.info("Agent服务成功关闭")
         except asyncio.TimeoutError:
             logger.warning("Agent服务关闭超时, 强制关闭, 部分任务将被释放")

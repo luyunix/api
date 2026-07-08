@@ -39,10 +39,16 @@ class DBSessionRepository(SessionRepository):
         # 3.会话存在则更新会话
         record.update_from_domain(session)
 
-    async def get_all(self) -> List[Session]:
+    async def get_all(self, user_id: Optional[str] = None) -> List[Session]:
         """获取所有会话列表"""
         # 1.构建sql查询所有记录
         stmt = select(SessionModel).order_by(SessionModel.latest_message_at.desc())
+        if user_id:
+            stmt = (
+                select(SessionModel)
+                .where(SessionModel.user_id == user_id)
+                .order_by(SessionModel.latest_message_at.desc())
+            )
         result = await self.db_session.execute(stmt)
         records = result.scalars().all()
 

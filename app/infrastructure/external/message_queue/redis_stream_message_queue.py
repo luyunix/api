@@ -3,6 +3,8 @@ import logging
 import uuid
 from typing import Any, Tuple, Optional, AsyncGenerator
 
+from redis.exceptions import TimeoutError as RedisTimeoutError
+
 from app.domain.external.message_queue import MessageQueue
 from app.infrastructure.storage.redis import get_redis
 
@@ -81,11 +83,15 @@ class RedisStreamMessageQueue(MessageQueue):
             start_id = '0'
 
         # 2.从redis流中获取一条数据
-        messages = await self._redis.client.xread(
-            {self._stream_name: start_id},
-            count=1,
-            block=block_ms,
-        )
+        try:
+            messages = await self._redis.client.xread(
+                {self._stream_name: start_id},
+                count=1,
+                block=block_ms,
+            )
+        except (RedisTimeoutError, asyncio.TimeoutError) as e:
+            logger.warning(f"从消息队列[{self._stream_name}]读取超时: {str(e)}")
+            return None, None
 
         # 3.检查messages是否存在
         if not messages:

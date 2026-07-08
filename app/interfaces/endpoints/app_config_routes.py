@@ -17,21 +17,21 @@ router = APIRouter(prefix="/app-config", tags=["设置模块"])
     path="/llm",
     response_model=Response[LLMConfig],
     summary="获取LLM配置信息",
-    description="包含LLM提供商的base_url、temperature、model_name、max_tokens"
+    description="包含LLM提供商的base_url、api_key、temperature、model_name、max_tokens"
 )
 async def get_llm_config(
         app_config_service: AppConfigService = Depends(get_app_config_service)
 ) -> Response[LLMConfig]:
     """获取LLM配置信息"""
     llm_config = await app_config_service.get_llm_config()
-    return Response.success(data=llm_config.model_dump(exclude={"api_key"}))
+    return Response.success(data=llm_config.model_dump())
 
 
 @router.post(
     path="/llm",
     response_model=Response[LLMConfig],
     summary="更新LLM配置信息",
-    description="更新LLM配置信息，当api_key为空的时候表示不更新该字段"
+    description="测试通过后更新LLM配置信息，当api_key为空的时候表示不更新该字段"
 )
 async def update_llm_config(
         new_llm_config: LLMConfig,
@@ -41,7 +41,25 @@ async def update_llm_config(
     updated_llm_config = await app_config_service.update_llm_config(new_llm_config)
     return Response.success(
         msg="更新LLM信息配置成功",
-        data=updated_llm_config.model_dump(exclude={"api_key"})
+        data=updated_llm_config.model_dump()
+    )
+
+
+@router.post(
+    path="/llm/test",
+    response_model=Response[Dict],
+    summary="测试LLM配置信息",
+    description="测试LLM配置是否可用，不保存配置，当api_key为空的时候表示沿用当前密钥"
+)
+async def test_llm_config(
+        new_llm_config: LLMConfig,
+        app_config_service: AppConfigService = Depends(get_app_config_service)
+) -> Response[Dict]:
+    """测试LLM配置信息"""
+    success = await app_config_service.test_llm_config(new_llm_config)
+    return Response.success(
+        msg="模型连接测试成功" if success else "模型连接测试失败",
+        data={"available": success},
     )
 
 
@@ -140,6 +158,24 @@ async def set_mcp_server_enabled(
     return Response.success(msg="更新MCP服务启用状态成功")
 
 
+@router.post(
+    path="/mcp-servers/{server_name}/test",
+    response_model=Response[Dict],
+    summary="测试MCP服务连接",
+    description="测试指定MCP服务连接，成功后标记为可用于任务运行",
+)
+async def test_mcp_server(
+        server_name: str,
+        app_config_service: AppConfigService = Depends(get_app_config_service),
+) -> Response[Dict]:
+    """测试MCP服务连接"""
+    success = await app_config_service.test_mcp_server(server_name)
+    return Response.success(
+        msg="MCP服务连接测试成功" if success else "MCP服务连接测试失败",
+        data={"available": success},
+    )
+
+
 @router.get(
     path="/a2a-servers",
     response_model=Response[ListA2AServerResponse],
@@ -201,3 +237,21 @@ async def set_a2a_server_enabled(
     """更新A2A服务的启用状态"""
     await app_config_service.set_a2a_server_enabled(a2a_id, enabled)
     return Response.success(msg="更新a2a服务器启用状态成功")
+
+
+@router.post(
+    path="/a2a-servers/{a2a_id}/test",
+    response_model=Response[Dict],
+    summary="测试A2A服务连接",
+    description="测试指定A2A服务连接，成功后标记为可用于任务运行",
+)
+async def test_a2a_server(
+        a2a_id: str,
+        app_config_service: AppConfigService = Depends(get_app_config_service),
+) -> Response[Dict]:
+    """测试A2A服务连接"""
+    success = await app_config_service.test_a2a_server(a2a_id)
+    return Response.success(
+        msg="A2A服务连接测试成功" if success else "A2A服务连接测试失败",
+        data={"available": success},
+    )
