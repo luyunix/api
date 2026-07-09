@@ -30,6 +30,28 @@ from httpx import Client
 from app.main import app
 
 
+TEST_EMAIL = "pytest-user@faber.local"
+TEST_PASSWORD = "pytest-password"
+
+
+def _auth_headers(client, api_prefix: str) -> dict[str, str]:
+    """注册/登录测试用户并返回认证头。"""
+    payload = {
+        "email": TEST_EMAIL,
+        "password": TEST_PASSWORD,
+        "username": "Pytest User",
+    }
+    response = client.post(f"{api_prefix}/auth/register", json=payload)
+    if response.status_code != 200:
+        response = client.post(
+            f"{api_prefix}/auth/login",
+            json={"email": TEST_EMAIL, "password": TEST_PASSWORD},
+        )
+    response.raise_for_status()
+    token = response.json()["data"]["access_token"]
+    return {"Authorization": f"Bearer {token}"}
+
+
 def _is_server_ready(url: str, timeout: float = 1.0) -> bool:
     """检查本地服务是否已可访问"""
     try:
@@ -48,6 +70,7 @@ def client() -> TestClient:
     TestClient 会自动管理应用 lifespan（启动/关闭）。
     """
     with TestClient(app) as c:
+        c.headers.update(_auth_headers(c, "/api"))
         yield c
 
 
@@ -145,6 +168,7 @@ def live_client(running_server) -> Client:
     如果服务未运行，running_server fixture 会自动启动它。
     """
     c = Client(base_url=running_server, timeout=5)
+    c.headers.update(_auth_headers(c, "/api"))
     try:
         yield c
     finally:

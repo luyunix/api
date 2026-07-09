@@ -1,5 +1,5 @@
 import logging
-from typing import AsyncGenerator, Optional
+from typing import Any, AsyncGenerator, Optional
 
 from app.domain.models.event import (
     StepEventStatus,
@@ -42,6 +42,32 @@ class ReActAgent(BaseAgent):
         ]
         text_lower = text.lower()
         return any(marker.lower() in text_lower for marker in markers)
+
+    @classmethod
+    def _extract_step_payload(cls, parsed_obj: Any) -> dict[str, Any]:
+        """从模型输出中提取符合步骤结果结构的对象。
+
+        json_repair 在遇到 `[EARLY_COMPLETE] {...}` 这类混合输出时可能返回列表，
+        这里递归查找真正包含 success/result/attachments 的 dict，避免 Pydantic
+        直接校验列表时报错。
+        """
+        if isinstance(parsed_obj, dict):
+            if any(key in parsed_obj for key in ("success", "result", "attachments")):
+                return parsed_obj
+            for value in parsed_obj.values():
+                try:
+                    return cls._extract_step_payload(value)
+                except ValueError:
+                    continue
+
+        if isinstance(parsed_obj, list):
+            for item in parsed_obj:
+                try:
+                    return cls._extract_step_payload(item)
+                except ValueError:
+                    continue
+
+        raise ValueError(f"未找到有效的步骤执行结果: {parsed_obj}")
 
     async def execute_step(self, plan: Plan, step: Step, message: Message) -> AsyncGenerator[BaseEvent, None]:
         """根据传递的消息+规划+子步骤，执行相应的子步骤"""
@@ -113,7 +139,10 @@ class ReActAgent(BaseAgent):
 
                 # 9.message中输出的数据结构为json，需要提取并解析
                 parsed_obj = await self._json_parser.invoke(event.message)
-                new_step = Step.model_validate(parsed_obj)
+                step_payload = self._extract_step_payload(parsed_obj)
+                step_payload.setdefault("id", step.id)
+                step_payload.setdefault("description", step.description)
+                new_step = Step.model_validate(step_payload)
 
                 # 10.更新子步骤的数据
                 step.success = new_step.success

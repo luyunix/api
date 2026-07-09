@@ -57,7 +57,7 @@ class BingSearchEngine(SearchEngine):
             async with httpx.AsyncClient(
                     headers=self.headers,
                     cookies=self.cookies,
-                    timeout=60,
+                    timeout=httpx.Timeout(10.0, connect=5.0),
                     follow_redirects=True,
             ) as client:
                 # 7.调用客户端发起请求

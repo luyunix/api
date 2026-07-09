@@ -249,3 +249,30 @@ class MemoryCompactor:
                 else "ok"
             ),
         }
+
+
+class MemoryBudgetManager(MemoryCompactor):
+    """旧版预算管理器兼容层。
+
+    新代码使用 MemoryCompactor；保留这个类名让旧测试和旧调用方继续工作。
+    """
+
+    def __init__(
+            self,
+            budget: int,
+            summarizer: Optional[MemorySummarizer] = None,
+            soft: float = MemoryCompactor.COMPACT_SOFT_THRESHOLD,
+            hard: float = MemoryCompactor.COMPACT_HARD_THRESHOLD,
+            emergency: float = MemoryCompactor.COMPACT_EMERGENCY_THRESHOLD,
+    ) -> None:
+        super().__init__(
+            usable_context=budget,
+            summarizer=summarizer,
+            soft=soft,
+            hard=hard,
+            emergency=emergency,
+        )
+
+    def check_and_compact(self, memory: Memory, model_name: Optional[str] = None) -> bool:
+        self._current_tokens = TokenCounter.count_messages(memory.get_messages(), model_name)
+        return self.usage_percentage >= self._hard

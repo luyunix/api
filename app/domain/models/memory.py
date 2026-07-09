@@ -61,6 +61,24 @@ class Memory(BaseModel):
         if self.working_messages:
             self.working_messages = self.working_messages[:-1]
 
+    def compact(self) -> None:
+        """旧版就地压缩接口。
+
+        新压缩路径由 MemoryCompactor 负责；这里保留轻量兼容行为，供旧调用方清理
+        浏览器工具结果和 reasoning_content。
+        """
+        compacted = []
+        for message in self.working_messages:
+            next_message = dict(message)
+            next_message.pop("reasoning_content", None)
+            if (
+                next_message.get("role") == "tool"
+                and next_message.get("function_name") in {"browser_navigate", "browser_view"}
+            ):
+                next_message["content"] = "(removed)"
+            compacted.append(next_message)
+        self.replace_working(compacted)
+
     # ------------------------------------------------------------------ #
     # 读取
     # ------------------------------------------------------------------ #

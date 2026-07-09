@@ -98,12 +98,30 @@ class PlannerAgent(BaseAgent):
 
                 # 8.判断是否有未完成的步骤，如果有则执行更新
                 if first_pending_index is not None:
-                    # 9.获取历史已完成的子步骤并更新
-                    updated_steps = plan.steps[:first_pending_index]
-                    updated_steps.extend(new_steps)
+                    # 9.保留已经展示过的步骤，避免进度面板在重规划后缩水。
+                    #    LLM 返回的是“更新后的未完成步骤”，但它可能漏掉原计划中的待执行步骤；
+                    #    对已有步骤按 id 更新描述/验收标准，对新增步骤追加，不删除旧步骤。
+                    completed_steps = plan.steps[:first_pending_index]
+                    pending_steps = plan.steps[first_pending_index:]
+                    new_steps_by_id = {new_step.id: new_step for new_step in new_steps}
+                    pending_step_ids = {pending_step.id for pending_step in pending_steps}
+
+                    updated_pending_steps = [
+                        Step.model_validate({
+                            **pending_step.model_dump(),
+                            **new_steps_by_id[pending_step.id].model_dump(exclude_unset=True),
+                        })
+                        if pending_step.id in new_steps_by_id
+                        else pending_step
+                        for pending_step in pending_steps
+                    ]
+                    appended_steps = [
+                        new_step for new_step in new_steps
+                        if new_step.id not in pending_step_ids
+                    ]
 
                     # 10.更新plan规划
-                    plan.steps = updated_steps
+                    plan.steps = completed_steps + updated_pending_steps + appended_steps
 
                 # 11.返回规划更新事件
                 yield PlanEvent(plan=plan, status=PlanEventStatus.UPDATED)

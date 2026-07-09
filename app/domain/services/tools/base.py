@@ -1,9 +1,13 @@
+import asyncio
 import inspect
+import logging
 from typing import Dict, Any, List, Callable
 
 from app.domain.models.tool_result import ToolResult
 
 """
+
+logger = logging.getLogger(__name__)
 Faber工具设计思路:
 1.所有工具都必须继承一个BaseTool基类，拥有统一的invoke方法用于调用该类下的对应工具;
 2.定义一个装饰器，被该装饰器装饰的方法会填充_tool_name、_tool_description、_tool_schema属性;
@@ -49,6 +53,7 @@ def tool(
 class BaseTool:
     """基础工具类，用于定义一个工具类，管理统一的工具集"""
     name: str = ""  # 工具集的名字
+    timeout_seconds: float = 20.0
 
     def __init__(self) -> None:
         """构造函数，完成缓存初始化"""
@@ -102,8 +107,16 @@ class BaseTool:
                 # 3.筛选传递的kwargs参数保留method对应的参数，多余的剔除
                 filtered_kwargs = self._filter_parameters(method, kwargs)
 
-                # 4.调用方法获取工具结果
-                return await method(**filtered_kwargs)
+                # 4.调用方法获取工具结果。工具卡住时返回失败结果，避免前端长期停在 calling 状态。
+                try:
+                    return await asyncio.wait_for(
+                        method(**filtered_kwargs),
+                        timeout=self.timeout_seconds,
+                    )
+                except asyncio.TimeoutError:
+                    message = f"工具[{tool_name}]执行超过 {self.timeout_seconds:.0f} 秒，已自动终止"
+                    logger.warning(message)
+                    return ToolResult(success=False, message=message)
 
         # 5.如果循环结束还没有找到工具并调用则抛出错误
         return ValueError(f"工具[{tool_name}]未找到")

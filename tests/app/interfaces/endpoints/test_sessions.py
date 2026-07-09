@@ -193,7 +193,7 @@ class TestSessions:
         # "default" 不是真实 shell 会话 ID，预期 500 或 404
         assert response.status_code in (200, 404, 500)
 
-    def test_vnc_websocket(self, chat_session_id, live_api_url: str):
+    def test_vnc_websocket(self, chat_session_id, live_client, live_api_url: str):
         """测试 WS /api/sessions/{id}/vnc WebSocket 连接"""
         import os
 
@@ -211,7 +211,8 @@ class TestSessions:
         old_env = {k: os.environ.pop(k, None) for k in proxy_vars}
 
         async def _connect():
-            ws_url = f"ws://localhost:8000/api/sessions/{chat_session_id}/vnc"
+            token = live_client.headers["Authorization"].removeprefix("Bearer ")
+            ws_url = f"ws://localhost:8000/api/sessions/{chat_session_id}/vnc?token={token}"
             async with websockets.connect(
                 ws_url, subprotocols=["binary"], open_timeout=5, proxy=None
             ) as ws:
